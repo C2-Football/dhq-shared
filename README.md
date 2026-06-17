@@ -44,3 +44,12 @@ Authoritative list also lives in each app's sync script
 
 App-specific modules that are **not** shared (Scout-only `data-cache.js`,
 `league-memory.js`, …; War Room's own `js/shared/*`) stay in their respective app repos.
+
+## Shared data (`draft-war-room/`)
+
+The rookie/prospect CSVs consumed by `rookie-data.js` also live here (static,
+hand-curated data): `draft-war-room/player.csv`, `draft-war-room/player-enrichment.csv`,
+`draft-war-room/data/mock_draft_db.csv`. Both apps vendor these alongside the modules
+and load them **same-origin** from their own deploy — neither fetches them cross-repo.
+War-Room-only draft-tool data (`player-sources.csv`, `prospects_test_2025.csv`,
+`players-final.json`) stays in the WarRoom repo.

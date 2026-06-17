@@ -32,5 +32,10 @@
     "gm-engine.js",
     "player-modal.js",
     "rookie-data.js"
+  ],
+  "data": [
+    "draft-war-room/player.csv",
+    "draft-war-room/player-enrichment.csv",
+    "draft-war-room/data/mock_draft_db.csv"
   ]
 }
