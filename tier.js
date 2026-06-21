@@ -40,6 +40,7 @@ const FEATURES = {
   UNLIMITED_CHAT:     'unlimited_chat',     // Unlimited AI chat (free = 3/day)
   WAR_ROOM_CORE:      'war_room_core',      // Full War Room access (paid only)
   DYNASTY_READ_AI:    'dynasty_read_ai',    // Web-search news synthesis on player cards (paid only)
+  STARTSIT_DEPTH:     'startsit_depth',     // Lineup depth: floor/ceiling bands, full bench upgrades, matchup hero
 
   // Legacy string keys used by pre-existing code — preserved for compat
   AI_UNLIMITED:       'ai-unlimited',       // ai-dispatch.js
@@ -54,6 +55,7 @@ const _TRIAL_FEATURES = new Set([
   FEATURES.DRAFT_ARCHETYPES,
   FEATURES.FAAB_INTELLIGENCE,
   FEATURES.BRIEFING_REASONING,
+  FEATURES.STARTSIT_DEPTH,
   FEATURES.UNLIMITED_CHAT,
   FEATURES.AI_UNLIMITED,
   FEATURES.TRADE_CALC,
@@ -87,7 +89,13 @@ function initTrial() {
 // access because users can edit them in the browser.
 function getTier() {
   if (isSandbox()) return 'paid';
-  if (window.DEV_MODE || ['localhost', '127.0.0.1'].includes(window.location?.hostname)) return 'paid';
+  // Dev-only tier override for QA-ing the free/trial experience locally.
+  // Gated to localhost so it can never bypass the paywall in production.
+  const _host = window.location?.hostname;
+  if ((_host === 'localhost' || _host === '127.0.0.1') && window.__DHQ_FORCE_TIER) {
+    return window.__DHQ_FORCE_TIER;
+  }
+  if (window.DEV_MODE || ['localhost', '127.0.0.1'].includes(_host)) return 'paid';
   if (window.App._userTier) return window.App._userTier;
 
   // Trial window
@@ -191,6 +199,7 @@ const _FEATURE_LABELS = {
   [FEATURES.DRAFT_ARCHETYPES]:   'Draft Archetype Analysis',
   [FEATURES.FAAB_INTELLIGENCE]:  'FAAB Intelligence',
   [FEATURES.BRIEFING_REASONING]: 'Briefing Reasoning',
+  [FEATURES.STARTSIT_DEPTH]:     'Lineup Depth Analysis',
   [FEATURES.FIELD_LOG_SYNC]:     'Field Log Sync',
   [FEATURES.UNLIMITED_CHAT]:     'Unlimited AI Chat',
   [FEATURES.WAR_ROOM_CORE]:      'War Room',
@@ -206,6 +215,7 @@ const _FEATURE_DESCS = {
   [FEATURES.DRAFT_ARCHETYPES]:   'Get a personalized draft strategy based on your roster needs, pick position, and league tendencies.',
   [FEATURES.FAAB_INTELLIGENCE]:  'Intelligent FAAB recommendations calibrated to your roster gaps, budget, and competition.',
   [FEATURES.BRIEFING_REASONING]: 'Understand the "why" behind every briefing item — not just what to watch, but the reasoning that drives it.',
+  [FEATURES.STARTSIT_DEPTH]:     'Floor/ceiling projection bands, full bench upgrade ranking, and matchup context for every lineup decision.',
   [FEATURES.FIELD_LOG_SYNC]:     'Sync your Field Log decisions to War Room for cross-platform dynasty intelligence.',
   [FEATURES.UNLIMITED_CHAT]:     'Remove the daily message cap and talk to your AI dynasty advisor as much as you need.',
   [FEATURES.WAR_ROOM_CORE]:      'Access the full War Room desktop experience with advanced multi-league analytics.',

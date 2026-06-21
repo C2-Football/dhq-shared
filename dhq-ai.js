@@ -204,7 +204,7 @@ Include:
 Search the web for current rookie rankings. Be specific with prospect names.
 Open with one honest sentence in your own voice — your gut read on this draft for our team — before the structured breakdown. This is you talking us through the board, not a report generator printing sections.`,
     maxTokens: 1200,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── TRADE SCOUT (opponent analysis) ────────────────────────────
@@ -265,7 +265,7 @@ Keep it to 4-6 sentences. Be definitive — give a clear recommendation.
 EXAMPLE OF AN IDEAL RESPONSE:
 Assistant: "**Amon-Ra St. Brown (WR, age 25, DHQ 7,400) — HOLD.** Elite WR1 locked in as Detroit's target leader. At 25 he's entering his prime (21-33 for WRs) with 8+ elite years ahead. DHQ 7,400 is fair — you'd need a top-3 pick + a starter to replace this production. Only sell for 8,000+ DHQ in return value."`,
     maxTokens: 500,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── ROOKIE SCOUT REPORT ──────────────────────────────────────────
@@ -292,7 +292,7 @@ Rate each 1-10 with a one-line explanation.
 
 Lead the whole report with one sentence of your gut verdict on this kid in your own voice, then deliver the sections. The grades are the evidence; the voice is yours.`,
     maxTokens: 1500,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── POWER RANKINGS X POST (skip few-shot) ──────────────────────
@@ -911,7 +911,7 @@ async function dhqAI(type, message, context, options) {
 
   // Auto-enable web search for real-time intent (injuries, news, rumors)
   // Tier-gated: only trial or paid users get web search (via canAccess)
-  const canUseWebSearch = typeof canAccess === 'function' && canAccess('BRIEFING_REASONING');
+  const canUseWebSearch = typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning');
   const lastUserContent = (options?.messages || []).filter(m => m.role === 'user').slice(-1)[0]?.content || message || '';
   const realTimeIntent = /\b(injur|news|update|latest|rumor|contract|sign(ed|ing)|cut|release|suspend|arrest|trade rumor|depth chart|status|headline|report)\b/i.test(lastUserContent);
   // dynasty_read is intrinsically a web-search feature (player news synthesis), so
