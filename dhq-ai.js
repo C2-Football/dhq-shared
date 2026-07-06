@@ -204,7 +204,7 @@ Include:
 Search the web for current rookie rankings. Be specific with prospect names.
 Open with one honest sentence in your own voice — your gut read on this draft for our team — before the structured breakdown. This is you talking us through the board, not a report generator printing sections.`,
     maxTokens: 1200,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── TRADE SCOUT (opponent analysis) ────────────────────────────
@@ -265,7 +265,7 @@ Keep it to 4-6 sentences. Be definitive — give a clear recommendation.
 EXAMPLE OF AN IDEAL RESPONSE:
 Assistant: "**Amon-Ra St. Brown (WR, age 25, DHQ 7,400) — HOLD.** Elite WR1 locked in as Detroit's target leader. At 25 he's entering his prime (21-33 for WRs) with 8+ elite years ahead. DHQ 7,400 is fair — you'd need a top-3 pick + a starter to replace this production. Only sell for 8,000+ DHQ in return value."`,
     maxTokens: 500,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── ROOKIE SCOUT REPORT ──────────────────────────────────────────
@@ -292,7 +292,7 @@ Rate each 1-10 with a one-line explanation.
 
 Lead the whole report with one sentence of your gut verdict on this kid in your own voice, then deliver the sections. The grades are the evidence; the voice is yours.`,
     maxTokens: 1500,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── POWER RANKINGS X POST (skip few-shot) ──────────────────────
@@ -335,6 +335,18 @@ Be specific about players and decisions discussed.`,
     instructions: `Context is a JSON object for one player {pid,name,team,pos,age,season,week} (plus league format flags when present). SEARCH THE WEB for the latest reporting on him — prioritize the last ~10 days plus this offseason's moves — from ESPN, PFF, The Athletic, and trusted team beat reporters. Then write 3-5 sentences of plain prose that weave together, in order: (1) SITUATION — the most important real, current development (depth-chart role and usage trend, injury + timeline, contract/roster status, a coaching/scheme change, or a teammate's move that opens or closes a path); (2) IMPACT — what it does to his value now; (3) LONG-TERM OUTLOOK — the dynasty trajectory over the next 1-3 seasons and why. Lead with the single most decision-relevant real development. Do NOT restate fantasy points, DHQ value, or position rank. Do NOT pad with generic age-curve commentary — if news is thin, give the most recent concrete situational fact and what it implies; never invent news. Confident, not hedged. Plain prose only: no markdown, bullets, headers, citations, or sign-off.`,
     maxTokens: 500,
     useWebSearch: true,
+  },
+
+  // ── START/SIT (Game Day Central coaching note) ─────────────────
+  // Powers Alex's 1-2 sentence game-day briefing at the top of Game Day
+  // Central. Facts (win%, points left on the bench, top upgrade, injuries) are
+  // computed deterministically by the start/sit engine and passed in — the model
+  // only narrates them, never invents numbers. Falls back to a seeded template
+  // client-side when AI is unavailable, so this is purely an upgrade.
+  'start-sit': {
+    system: DHQ_IDENTITY,
+    instructions: `Context is a JSON object with this week's facts {week, winPct, margin, opponent, pointsLeftOnBench, topUpgrade, topUpgradeSlot, injuries[], objective, mode}. Write ONE to TWO punchy sentences of game-day coaching for the GM: whether they're favored (use winPct/opponent), the single most valuable start/sit move if pointsLeftOnBench is meaningful (name topUpgrade and its slot), and any injuries to monitor. Use ONLY the numbers provided — never invent points, ranks, or news. Confident, human, conversational. Plain prose only: no markdown, lists, headers, or sign-off.`,
+    maxTokens: 160,
   },
 };
 
@@ -911,7 +923,7 @@ async function dhqAI(type, message, context, options) {
 
   // Auto-enable web search for real-time intent (injuries, news, rumors)
   // Tier-gated: only trial or paid users get web search (via canAccess)
-  const canUseWebSearch = typeof canAccess === 'function' && canAccess('BRIEFING_REASONING');
+  const canUseWebSearch = typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning');
   const lastUserContent = (options?.messages || []).filter(m => m.role === 'user').slice(-1)[0]?.content || message || '';
   const realTimeIntent = /\b(injur|news|update|latest|rumor|contract|sign(ed|ing)|cut|release|suspend|arrest|trade rumor|depth chart|status|headline|report)\b/i.test(lastUserContent);
   // dynasty_read is intrinsically a web-search feature (player news synthesis), so
