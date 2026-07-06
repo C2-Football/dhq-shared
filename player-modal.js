@@ -560,8 +560,10 @@ function openFWPlayerModal(playerIdOrObj, playersData, statsData, scoringSetting
   // ── Stats bar ──
   const curYear = parseInt(S.season) || new Date().getFullYear();
   const prevYr = String(curYear - 1).slice(2);
-  const trendLabel = trend > 100 ? 'Rising' : trend < -100 ? 'Falling' : 'Stable';
-  const trendCol = trend > 100 ? _wr.green : trend < -100 ? _wr.red : _wr.text3;
+  // meta.trend is season-over-season PPG % change (dhq-engine) — same ±15
+  // thresholds as the Trade Profile line so the two never contradict.
+  const trendLabel = trend >= 15 ? 'Rising' : trend <= -15 ? 'Falling' : 'Stable';
+  const trendCol = trend >= 15 ? _wr.green : trend <= -15 ? _wr.red : _wr.text3;
 
   let statBoxes;
   if (isIDP && rawStats) {
@@ -585,7 +587,7 @@ function openFWPlayerModal(playerIdOrObj, playersData, statsData, scoringSetting
       {val: fcRankData ? '#'+fcRankData.pos : '\u2014', lbl: 'Pos Rank', col: _wr.gold},
       {val: ppg ? ppg.toFixed(1) : '\u2014', lbl: `'${prevYr} PPG`, col: ppg > 15 ? _wr.green : ppg > 8 ? _wr.text : _wr.text3},
       {val: total ? Math.round(total) : '\u2014', lbl: `'${prevYr} Total`, col: _wr.text2},
-      {val: trendLabel, lbl: '30d Trend', col: trendCol},
+      {val: trendLabel, lbl: 'YoY Trend', col: trendCol},
     ];
   }
 

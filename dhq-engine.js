@@ -20,7 +20,16 @@ function _dhqIsSandbox(){
 // ══════════════════════════════════════════════════════════════════
 
 const LI_CACHE_KEY='dhq_leagueintel_v14';
-const LI_TTL=8*60*60*1000; // 8 hours
+// LI staleness is season-aware: 8h is fine in the offseason (values drift
+// slowly), but during the regular season rosters/FAAB/trades move daily, so
+// the cache goes stale in 2h. Resolved at check time (not parse time) because
+// nflState isn't loaded yet when this module parses.
+const LI_TTL=8*60*60*1000; // 8 hours — offseason default
+const LI_TTL_IN_SEASON=2*60*60*1000; // 2 hours — regular season
+function _liTtl(){
+  const ns=(window.App.S||window.S)?.nflState;
+  return ns?.season_type==='regular'?LI_TTL_IN_SEASON:LI_TTL;
+}
 let LI={}; // LeagueIntel data object — populated async after connect
 let LI_LOADED=false;
 
@@ -597,7 +606,7 @@ function _dhqStatusAdjustment({p,pos,age,peakEnd,declineEnd,seasons,curSeason,la
 function loadLICache(){
   const d=DhqStorage.get(LI_CACHE_KEY,null);
   if(!d)return false;
-  if(Date.now()-d.ts>LI_TTL)return false;
+  if(Date.now()-d.ts>_liTtl())return false;
   const S=window.App.S||window.S;
   if(!S||d.leagueId!==S.currentLeagueId)return false;
   LI=d.data;LI_LOADED=true;

@@ -5,8 +5,9 @@
 // projected lineup distribution (mean from medians, variance from the
 // floor↔ceiling bands). Reuses App.WeeklyProj projections.
 //   resolveOpponentRosterId({league, myRosterId, week}) → Promise<id|null>
-//   dist(starterPids, projections)  → { mean, sd }
+//   dist(starterPids, projections)  → { mean, sd, n }
 //   forecast(myDist, oppDist)       → { winPct, projMe, projOpp, margin }
+//     (winPct/margin are null when either side has no projectable players)
 // ══════════════════════════════════════════════════════════════════
 (function (root) {
     'use strict';
@@ -25,7 +26,7 @@
     // sum of player variances (treated independent).
     function dist(starterPids, projections, key) {
         const obj = key || 'median';
-        let mean = 0, varSum = 0;
+        let mean = 0, varSum = 0, n = 0;
         (starterPids || []).forEach(pid => {
             const p = projections && projections[pid];
             if (!p || !p.points || p.available === false) return;
@@ -34,13 +35,20 @@
             const f = pts.floor != null ? pts.floor : med;
             const c = pts.ceiling != null ? pts.ceiling : med;
             const sd = Math.max(0.5, (c - f) / 2);
-            mean += med; varSum += sd * sd;
+            mean += med; varSum += sd * sd; n++;
         });
-        return { mean: Math.round(mean * 10) / 10, sd: Math.sqrt(varSum) };
+        // n = contributing players — 0 means "no data", not "projects 0".
+        return { mean: Math.round(mean * 10) / 10, sd: Math.sqrt(varSum), n };
     }
 
     // P(my team outscores opponent), plus projected (expected) scores + margin.
+    // No forecast when either side has zero contributing players (n===0): an
+    // empty/unprojectable lineup is "no data", not a 0-point projection, so a
+    // confident 1%/99% would be wrong on both ends.
     function forecast(myDist, oppDist) {
+        if (!myDist.n || !oppDist.n) {
+            return { winPct: null, projMe: myDist.mean, projOpp: oppDist.mean, margin: null };
+        }
         const denom = Math.sqrt(myDist.sd * myDist.sd + oppDist.sd * oppDist.sd) || 1;
         const z = (myDist.mean - oppDist.mean) / denom;
         return {

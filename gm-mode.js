@@ -302,6 +302,93 @@
         };
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // promptData / promptBlock — THE canonical GM-Strategy prompt serializer.
+    //
+    // Every AI surface ([GM_STRATEGY] in dhq-ai, the Ask Alex GM MODE
+    // DIRECTIVE, structured payloads via buildStructuredBase, Alex Insights)
+    // renders the strategy through this one seam so the model always sees the
+    // FULL plan — mode directive, timeline, aggression/floor, market posture,
+    // draft style, target/sell positions, parsed sell rules, and untouchable
+    // player NAMES — not the legacy riskTolerance/targets fields.
+    // ══════════════════════════════════════════════════════════════════
+    const TIMELINE_PROMPT_LABELS = {
+        '1_year': 'This season (1-year window, all-in)',
+        '2_3_years': '2-3 year contention window',
+        'dynasty_long': 'Long-horizon dynasty build',
+    };
+    const POSTURE_PROMPT_LABELS = {
+        buy_low: 'Buy low (target undervalued / dipping assets)',
+        sell_high: 'Sell high (move assets at peak value)',
+        hold: 'Hold (trade only from a position of strength)',
+        exploit: 'Exploit market inefficiencies',
+    };
+    const DRAFT_STYLE_PROMPT_LABELS = {
+        accumulate: 'Accumulate picks / build depth',
+        consolidate: 'Consolidate depth into elite talent',
+        positional_need: 'Draft for positional need',
+        bpa: 'Best player available',
+    };
+
+    function untouchableNamesFor(pidSet) {
+        const S = window.S || (window.App && window.App.S) || {};
+        return Array.from(pidSet || []).map(pid =>
+            (S.players && S.players[pid] && (S.players[pid].full_name
+                || ((S.players[pid].first_name || '') + ' ' + (S.players[pid].last_name || '')).trim()))
+            || String(pid));
+    }
+
+    // Structured object form. Returns null when no strategy has been saved.
+    function promptData(leagueId) {
+        const fx = effects(leagueId);
+        if (!fx.hasStrategy) return null;
+        const parseRule = window.GMStrategy && window.GMStrategy.parseSellRule;
+        const sellRules = (fx.sellRules || []).map(rule => {
+            if (typeof rule === 'string') return rule;
+            if (typeof parseRule === 'function') {
+                const parsed = parseRule(rule);
+                if (parsed && parsed.pos) return 'Sell ' + parsed.pos + (parsed.ageAbove ? ' age ' + parsed.ageAbove + '+' : '');
+            }
+            return (rule && rule.pos) ? 'Sell ' + rule.pos + (rule.ageAbove ? ' age ' + rule.ageAbove + '+' : '') : '';
+        }).filter(Boolean);
+        return {
+            mode: fx.mode,
+            modeLabel: fx.modeLabel,
+            directive: fx.prompt,
+            timeline: fx.timeline,
+            timelineLabel: TIMELINE_PROMPT_LABELS[fx.timeline] || fx.timeline,
+            aggression: fx.aggressionKey,
+            acceptanceFloor: fx.acceptanceFloor,
+            marketPosture: fx.marketPosture,
+            marketPostureLabel: POSTURE_PROMPT_LABELS[fx.marketPosture] || fx.marketPosture,
+            draftStyle: fx.draftStyle,
+            draftStyleLabel: DRAFT_STYLE_PROMPT_LABELS[fx.draftStyle] || fx.draftStyle,
+            targetPositions: Array.from(fx.targetPositions || []),
+            sellPositions: Array.from(fx.sellPositions || []),
+            sellRules,
+            untouchableNames: untouchableNamesFor(fx.untouchable),
+        };
+    }
+
+    // Text-block form. `data` lets callers reuse an already-computed
+    // promptData; returns '' when no strategy has been saved.
+    function promptBlock(leagueId, data) {
+        const d = data || promptData(leagueId);
+        if (!d) return '';
+        const lines = [
+            'Mode: ' + d.modeLabel + ' — ' + d.directive,
+            'Timeline: ' + d.timelineLabel,
+            'Trade aggression: ' + d.aggression + ' (acceptance floor ' + d.acceptanceFloor + '%)',
+            'Market posture: ' + d.marketPostureLabel,
+            'Draft style: ' + d.draftStyleLabel,
+        ];
+        if (d.targetPositions.length) lines.push('Target positions (acquire): ' + d.targetPositions.join(', '));
+        if (d.sellPositions.length) lines.push('Sell positions (move): ' + d.sellPositions.join(', '));
+        if (d.sellRules.length) lines.push('Sell rules: ' + d.sellRules.join('; '));
+        if (d.untouchableNames.length) lines.push('Untouchable (never trade away): ' + d.untouchableNames.join(', '));
+        return lines.join('\n');
+    }
+
     // React hook: resolves effects(leagueId) and live-updates on GM Strategy
     // save. Generalizes the proven free-agency tick+listener pattern. Depends
     // on BOTH leagueId (league switch) and an internal tick (in-place save),
@@ -333,7 +420,48 @@
         acceptanceFloorFor,
         effects,
         useGmEffects,
+        promptData,
+        promptBlock,
         // List of mode ids excluding custom — for the preset picker
         list: () => ['rebuild', 'compete', 'win_now'],
     };
+
+    // ── DhqEvents 'strategy:changed' → 'wr:gm-mode-changed' bridge ────
+    // GMStrategy.saveStrategy / syncFromRemote emit ONLY the DhqEvents
+    // 'strategy:changed' event, but every War Room consumer (useGmEffects,
+    // FA filter ticks, Trade Finder) listens on the 'wr:gm-mode-changed'
+    // window event. Bridge the two so remote sync, focus sync, and
+    // Scout-side saves live-update consumers without a reload.
+    // Re-entrancy guard: strategy-editor saves already fire BOTH paths
+    // (harmless double tick); the guard stops any synchronous dispatch loop
+    // if a 'wr:gm-mode-changed' listener writes the strategy back.
+    (function bootStrategyChangedBridge() {
+        let bridging = false;
+        function onStrategyChanged(strategy) {
+            if (bridging) return;
+            bridging = true;
+            try {
+                if (strategy && typeof strategy === 'object') window._wrGmStrategy = strategy;
+                window.dispatchEvent(new CustomEvent('wr:gm-mode-changed', {
+                    detail: { mode: strategy && strategy.mode, strategy, source: 'strategy:changed' },
+                }));
+            } finally {
+                bridging = false;
+            }
+        }
+        function subscribe() {
+            if (window.DhqEvents && typeof window.DhqEvents.on === 'function') {
+                window.DhqEvents.on('strategy:changed', onStrategyChanged);
+                return true;
+            }
+            return false;
+        }
+        if (!subscribe()) {
+            // event-bus.js normally loads first; retry once in case this copy
+            // boots ahead of it in another embed order.
+            const retry = () => { subscribe(); };
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', retry, { once: true });
+            else setTimeout(retry, 0);
+        }
+    })();
 })();

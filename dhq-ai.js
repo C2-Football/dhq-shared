@@ -973,13 +973,23 @@ function dhqBuildToneContext() {
   const phase = nfl.season_type === 'off' || week === 0 ? 'offseason'
     : week <= 4 ? 'early' : week <= 10 ? 'midseason' : week <= 14 ? 'late' : 'playoffs';
 
-  // GM Strategy mode
-  const gmStrat = window._wrGmStrategy;
-  const mode = gmStrat?.mode || 'balanced';
+  // GM Strategy mode — normalized to the canonical rebuild/compete/win_now
+  // ids (legacy 'contend'/'balanced' included). Before this, canonical
+  // compete/win_now strings fell through to the crossroads voice.
+  let mode = 'compete';
+  try {
+    if (window.WR?.GmMode?.getMode) {
+      mode = window.WR.GmMode.getMode(S.currentLeagueId);
+    } else {
+      const gmStrat = window._wrGmStrategy;
+      const legacy = { contend: 'win_now', balanced: 'compete', retool: 'compete', balanced_rebuild: 'rebuild' };
+      mode = legacy[gmStrat?.mode] || gmStrat?.mode || 'compete';
+    }
+  } catch { /* keep default */ }
 
   // Build tone guidance
   const lines = [];
-  if (mode === 'contend' || (mode === 'balanced' && topHalf)) {
+  if (mode === 'win_now' || (mode === 'compete' && topHalf)) {
     if (gp > 0 && wins / gp >= 0.65) {
       lines.push('Team is winning and contending. Be confident and aggressive. Use language like "let\'s close this out", "championship-caliber move", "we\'re in the driver\'s seat".');
     } else if (gp > 0 && wins / gp >= 0.45) {
@@ -1098,20 +1108,34 @@ function dhqContext(includeOwners) {
     }
   } catch {}
 
-  // Inject user's GM Strategy if set
-  const gmStrat = window._wrGmStrategy;
-  if (gmStrat && (gmStrat.mode !== 'balanced' || gmStrat.riskTolerance !== 'moderate' || gmStrat.untouchable?.length || gmStrat.targets?.length || gmStrat.notes)) {
-    const stratParts = [`Mode: ${gmStrat.mode}`, `Risk: ${gmStrat.riskTolerance}`];
-    if (gmStrat.untouchable?.length) {
-      const S2 = window.S || {};
-      const names = gmStrat.untouchable.map(pid => S2.players?.[pid]?.full_name || pid).join(', ');
-      stratParts.push(`Untouchable players: ${names}`);
+  // Inject user's GM Strategy if set — the canonical serializer
+  // (WR.GmMode.promptData/promptBlock) renders the FULL strategy: mode
+  // directive, timeline, aggression + acceptance floor, market posture,
+  // draft style, target/sell positions, sell rules, untouchable NAMES.
+  // The legacy riskTolerance/targets/positionalNeeds path is kept only for
+  // embeds where gm-mode.js isn't loaded.
+  let gmPd = null;
+  try {
+    gmPd = window.WR?.GmMode?.promptData?.((window.S || window.App?.S)?.currentLeagueId) || null;
+  } catch { /* gm-mode optional */ }
+  if (gmPd) {
+    parts.push('[GM_STRATEGY]\nThe owner has committed to this strategy. IMPORTANT: honor it in every recommendation.\n'
+      + window.WR.GmMode.promptBlock(null, gmPd));
+  } else {
+    const gmStrat = window._wrGmStrategy;
+    if (gmStrat && (gmStrat.mode !== 'balanced' || gmStrat.riskTolerance !== 'moderate' || gmStrat.untouchable?.length || gmStrat.targets?.length || gmStrat.notes)) {
+      const stratParts = [`Mode: ${gmStrat.mode}`, `Risk: ${gmStrat.riskTolerance}`];
+      if (gmStrat.untouchable?.length) {
+        const S2 = window.S || {};
+        const names = gmStrat.untouchable.map(pid => S2.players?.[pid]?.full_name || pid).join(', ');
+        stratParts.push(`Untouchable players: ${names}`);
+      }
+      if (gmStrat.targets?.length) stratParts.push(`Targeting in trades: ${gmStrat.targets.join(', ')}`);
+      const posNeeds = Object.entries(gmStrat.positionalNeeds || {}).filter(([,v]) => v >= 7).map(([pos,v]) => `${pos}(${v}/10)`);
+      if (posNeeds.length) stratParts.push(`High priority positions: ${posNeeds.join(', ')}`);
+      if (gmStrat.notes) stratParts.push(`Owner notes: "${gmStrat.notes}"`);
+      parts.push('[GM_STRATEGY]\nThe owner has set the following strategic preferences. IMPORTANT: Honor these when making recommendations.\n' + stratParts.join('\n'));
     }
-    if (gmStrat.targets?.length) stratParts.push(`Targeting in trades: ${gmStrat.targets.join(', ')}`);
-    const posNeeds = Object.entries(gmStrat.positionalNeeds || {}).filter(([,v]) => v >= 7).map(([pos,v]) => `${pos}(${v}/10)`);
-    if (posNeeds.length) stratParts.push(`High priority positions: ${posNeeds.join(', ')}`);
-    if (gmStrat.notes) stratParts.push(`Owner notes: "${gmStrat.notes}"`);
-    parts.push('[GM_STRATEGY]\nThe owner has set the following strategic preferences. IMPORTANT: Honor these when making recommendations.\n' + stratParts.join('\n'));
   }
 
   // ── Commissioner league docs (bylaws, awards, custom rules) ──
