@@ -22,6 +22,13 @@
     aggression: 'medium',
     draftStyle: 'bpa',
     marketPosture: 'hold',
+    // LEGACY — parsed but unused (2026-07-08 single-voice ruling). Alex has
+    // one canonical voice; alexPersonality is no longer a voice knob anywhere.
+    // The field stays in the schema because it is server-synced and old
+    // profiles carry it forever: normalizeStrategy keeps accepting and
+    // round-tripping stored values ('aggressive' | 'value_hunter' |
+    // 'balanced') so no reader ever crashes, and saveStrategy keeps writing
+    // the merged value for server-schema compatibility. Do not repurpose.
     alexPersonality: 'balanced',
     lastSyncedFrom: 'warroom',
     lastSyncedAt: Date.now(),

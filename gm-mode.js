@@ -3,8 +3,13 @@
 //
 // Three first-class presets: Rebuild / Compete / Win Now. Selecting a preset
 // auto-bundles every downstream variable (aggression, draftStyle,
-// marketPosture, timeline, personality). Custom mode unlocks individual
-// sliders in the Strategy Editor.
+// marketPosture, timeline). Custom mode unlocks individual sliders in the
+// Strategy Editor.
+//
+// 2026-07-08 single-voice ruling: presets no longer write `alexPersonality`
+// (the retired voice knob). Old strategies that carry it survive untouched —
+// applyPreset merges over the existing object and strategy.js normalization
+// keeps round-tripping the field for server-schema compatibility.
 //
 // This module is the single source of truth for mode. It:
 //   - Normalizes legacy mode labels from both my-team.js and strategy-editor.js
@@ -34,7 +39,6 @@
                 draftStyle: 'accumulate',
                 marketPosture: 'sell_high',
                 timeline: 'dynasty_long',
-                alexPersonality: 'value_hunter',
                 targetPositions: [],
                 sellPositions: [],
             },
@@ -52,7 +56,6 @@
                 draftStyle: 'bpa',
                 marketPosture: 'hold',
                 timeline: '2_3_years',
-                alexPersonality: 'balanced',
                 targetPositions: [],
                 sellPositions: [],
             },
@@ -70,7 +73,6 @@
                 draftStyle: 'consolidate',
                 marketPosture: 'buy_low',
                 timeline: '1_year',
-                alexPersonality: 'aggressive',
                 targetPositions: [],
                 sellPositions: [],
             },
@@ -297,7 +299,11 @@
             faFilters: strategy.faFilters || null,
             marketPosture,
             timeline,
-            alexPersonality: strategy.alexPersonality || cfg.alexPersonality || 'balanced',
+            // Legacy tolerance (2026-07-08 single-voice ruling): alexPersonality
+            // is retired as a voice knob, but old server-synced strategies carry
+            // it forever. Keep surfacing it read-only so stale readers never
+            // crash; nothing should consume it for voice.
+            alexPersonality: strategy.alexPersonality || 'balanced',
             hasStrategy: !!(strategy && strategy.mode),
         };
     }
