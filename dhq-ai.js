@@ -2,8 +2,7 @@
 // shared/dhq-ai.js — The DHQ AI Brain
 // One file, one brain, all apps. Every AI interaction flows through here.
 //
-// Usage:  const reply = await dhqAI('home-chat', userMessage, context);
-//         const reply = await dhqAI('waiver-agent', null, context);
+// Usage:  const reply = await dhqAI('waiver-agent', null, context);
 //         const reply = await dhqAI('trade-chat', userMessage, context);
 // ══════════════════════════════════════════════════════════════════
 
@@ -79,24 +78,10 @@ const DHQ_IDENTITY = _buildIdentity();
 
 const DHQ_PROMPTS = {
 
-  // ── HOME CHAT ──────────────────────────────────────────────────
-  'home-chat': {
-    system: DHQ_IDENTITY,
-    instructions: `Context is provided as JSON. You are answering general dynasty questions about the user's team.
-Be helpful, specific, and reference their actual roster data.
-If they ask about a specific player, include that player's DHQ value and peak window.
-If they ask "what should I do?" — give 2-3 specific, actionable moves with reasoning.
-
-EXAMPLE OF AN IDEAL RESPONSE:
-User: "What moves should I make?"
-Assistant: "Three moves to make right now:
-1. **Add Marcus Williams (DB, DHQ 2,800)** — your DB2 slot is thin and he's the top available IDP. Bid $12 FAAB.
-2. **Shop Derrick Henry (RB, DHQ 3,100)** — he's 31, past peak, and Team X needs an RB badly. Target their 2027 1st (DHQ ~4,000). Net gain: ~900 DHQ.
-3. **Hold your 2026 1.03** — your biggest asset. Don't sell for anything less than a top-5 dynasty WR."`,
-    maxTokens: 500,
-  },
-
   // ── TRADE CHAT ─────────────────────────────────────────────────
+  // Repurposed as a one-shot "trade idea" call (player-card.js's Ask
+  // Alex button) — a single ask, no multi-turn history. The TRADE_CARD
+  // format is what powers the yourSide/theirSide proposal card.
   'trade-chat': {
     system: DHQ_IDENTITY,
     instructions: `Context is provided as JSON. You are a dynasty trade advisor with access to REAL league data.
@@ -120,30 +105,6 @@ Assistant: "**Travis Kelce** (TE, age 35, DHQ 3,200) is past peak but still a to
 You gain ~700 DHQ in future value, they get an immediate TE upgrade.
 <!-- TRADE_CARD:{"yourSide":[{"name":"Travis Kelce","dhq":3200}],"theirSide":[{"name":"2026 R2","dhq":2800},{"name":"Dawson Knox","dhq":1100}],"target":"Big Loco","sleeperDM":"Hey! Saw you are thin at TE — would you move your 2026 2nd + Knox for Kelce? Instant starter for your playoff push."} -->"`,
     maxTokens: 600,
-  },
-
-  // ── WAIVER CHAT ────────────────────────────────────────────────
-  'waiver-chat': {
-    system: DHQ_IDENTITY,
-    instructions: `Context is provided as JSON. You are a dynasty waiver wire advisor.
-Answer based ONLY on the actual available players listed in the context.
-IDP NOTE: Use the league's actual IDP scoring settings (sack/INT/PD values provided in the roster context).
-DBs with INT/PD potential are premium. Edge rushers with sack upside too.
-Be specific — name actual players from the available list. 3-5 sentences max.
-
-FAAB DISCIPLINE:
-- If the free agent pool is weak (all targets DHQ < 1500), say "Hold your FAAB."
-- Rebuilding teams: only bid on age 25 or younger with upside.
-- Contending teams: only bid on players who would START for you.
-- Never recommend spending FAAB just to fill a roster spot with a replacement-level player.
-
-EXAMPLE OF AN IDEAL RESPONSE:
-User: "Who should I pick up this week?"
-Assistant: "Top 3 waiver adds:
-1. **Aidan Hutchinson (DL, DHQ 3,400)** — elite edge rusher returning from injury, your DL2 is empty. Bid $25 FAAB.
-2. **Rashod Bateman (WR, DHQ 1,600)** — WR3 upside at $5 FAAB.
-3. **Tyler Badie (RB, DHQ 800)** — handcuff lottery ticket, $1 FAAB."`,
-    maxTokens: 400,
   },
 
   // ── WAIVER AGENT (JSON output — skip few-shot) ─────────────────
@@ -223,22 +184,18 @@ When you suggest specific trade proposals, include a TRADE_CARD block at the end
   },
 
   // ── PICK ANALYSIS ──────────────────────────────────────────────
+  // Fast, fail-fast reaction to a SINGLE draft pick as it lands (live
+  // draft room command-center.js — fires ambiently, retries=0 by design).
+  // Not a portfolio/asset analysis — the caller's own prompt already
+  // states the exact ask; these instructions just set the voice/length
+  // so the model doesn't need to be told that from scratch every pick.
   'pick-analysis': {
     system: DHQ_IDENTITY,
-    instructions: `Context is provided as JSON. Analyze the user's draft pick portfolio.
-Include:
-1. SELL NOW — picks to trade while value is high
-2. HOLD — picks worth keeping given the user's mentality
-3. BUY — picks to acquire from other teams (and who might sell)
-4. OVERALL ASSESSMENT — pick-rich or pick-poor vs league? Impact on dynasty timeline?
-Be specific with round and year for each recommendation.
+    instructions: `Context is provided as JSON, followed by the specific pick to react to. React in 1-2 sentences as Alex the draft analyst — direct, punchy, in character. Say whether it's a good fit, a reach, or a steal, and why, referencing the team's actual needs when given. No preamble, no headers, no markdown — just the reaction.
 
 EXAMPLE OF AN IDEAL RESPONSE:
-Assistant: "**SELL NOW:** 2026 2.08 (DHQ ~2,600) — late 2nds bust 70% of the time. Package with a depth player to upgrade.
-**HOLD:** 2026 1.03 (DHQ ~7,500) — top-3 pick in a loaded class, your rebuild cornerstone.
-**BUY:** Target Scooter's 2027 1st — he's in win-now mode and has sold picks before. Offer your 2026 3rd + a veteran starter.
-**Overall:** Pick-rich (top 25%). Well-positioned for a 2-year rebuild."`,
-    maxTokens: 600,
+Assistant: "Big value — WR was RB4-deep at pick 1.09, and this fills the exact need you flagged after your bye-week RB2 clog."`,
+    maxTokens: 200,
   },
 
   // ── PLAYER SCOUT REPORT ────────────────────────────────────────
@@ -789,14 +746,14 @@ function checkTradeMath(text) {
   return ratio > 0.20 ? { sideA, sideB, ratio: Math.round(ratio * 100) } : null;
 }
 
-const VALIDATION_TYPES = ['home-chat', 'trade-chat', 'waiver-chat', 'waiver-agent', 'draft-chat'];
+const VALIDATION_TYPES = ['trade-chat', 'waiver-agent', 'draft-chat'];
 
 function validateAIResponse(type, response, ctx) {
   if (!VALIDATION_TYPES.includes(type)) return { text: response, issues: [] };
   const text = typeof response === 'string' ? response : JSON.stringify(response);
   const issues = [];
   const names = extractResponseNames(text);
-  const isWaiver = type === 'waiver-chat' || type === 'waiver-agent';
+  const isWaiver = type === 'waiver-agent';
   const isTrade = type === 'trade-chat';
 
   for (const name of names) {
@@ -852,14 +809,15 @@ async function dhqAI(type, message, context, options) {
   const useWebSearch = config.useWebSearch || false;
 
   // Improvement D: Inject real-time news for applicable types
-  const newsTypes = ['home-chat', 'trade-chat', 'player-scout', 'draft-chat'];
+  const newsTypes = ['trade-chat', 'player-scout', 'draft-chat'];
   let newsContext = '';
   if (newsTypes.includes(type)) {
     newsContext = dhqEnrichWithNews(message);
   }
 
-  // Capture user preferences for chat types
-  const chatTypes = ['home-chat','trade-chat','waiver-chat','draft-chat'];
+  // Capture user preferences from the ask (still meaningful for one-shot
+  // types that carry a real message, not just chat).
+  const chatTypes = ['trade-chat','draft-chat'];
   if (chatTypes.includes(type) && message) {
     try { if (typeof captureUserPreferences === 'function') captureUserPreferences(message); } catch (e) {}
   }
@@ -874,7 +832,7 @@ async function dhqAI(type, message, context, options) {
   // NOTE: 'pick-analysis' is intentionally excluded — it fires on every qualifying
   // draft pick and is a 1-2 sentence reaction that needs no league-memory continuity.
   // Skipping it removes a Supabase memory READ per pick (less network noise, snappier).
-  const memoryTypes = ['home-chat','trade-chat','waiver-chat','draft-chat','trade-scout','player-scout'];
+  const memoryTypes = ['trade-chat','draft-chat','trade-scout','player-scout'];
   if (memoryTypes.includes(type)) {
     try {
       const memCtx = await buildMemoryContext(window.S?.currentLeagueId);
@@ -1066,166 +1024,6 @@ function dhqBuildBehaviorContext() {
   }
 }
 
-// Full context builder — assembles labeled JSON sections for detailed prompts
-function dhqContext(includeOwners) {
-  const parts = [];
-  const roster = dhqBuildRosterContext(false);
-  if (roster) parts.push('[ROSTER_CONTEXT]\n' + roster);
-  const mentality = dhqBuildMentalityContext();
-  if (mentality) parts.push('[MENTALITY]\n' + mentality);
-  const league = dhqBuildLeagueContext();
-  if (league) parts.push('[LEAGUE]\n' + league);
-  if (includeOwners) {
-    const owners = dhqBuildOwnerProfiles();
-    if (owners) parts.push('[OWNERS]\n' + owners);
-  }
-  // Inject situational tone
-  const tone = dhqBuildToneContext();
-  if (tone) parts.push('[TONE]\n' + tone);
-
-  // Inject recent chat summary for continuity
-  try {
-    const leagueId = (window.S || window.App?.S)?.currentLeagueId;
-    const chatKey = 'wr_chat_' + leagueId;
-    const saved = leagueId ? localStorage.getItem(chatKey) : null;
-    if (saved) {
-      const msgs = JSON.parse(saved);
-      const recent = msgs.filter(m => m.role === 'assistant' && m.content.length > 50).slice(-2);
-      if (recent.length) {
-        const summaries = recent.map(m => m.content.substring(0, 150) + (m.content.length > 150 ? '...' : ''));
-        parts.push('[RECENT_CONVERSATIONS]\nYour recent advice to this user (reference naturally if relevant):\n' + summaries.join('\n---\n'));
-      }
-    }
-  } catch {}
-
-  // Inject user's GM Strategy if set — the canonical serializer
-  // (WR.GmMode.promptData/promptBlock) renders the FULL strategy: mode
-  // directive, timeline, aggression + acceptance floor, market posture,
-  // draft style, target/sell positions, sell rules, untouchable NAMES.
-  // The legacy riskTolerance/targets/positionalNeeds path is kept only for
-  // embeds where gm-mode.js isn't loaded.
-  let gmPd = null;
-  try {
-    gmPd = window.WR?.GmMode?.promptData?.((window.S || window.App?.S)?.currentLeagueId) || null;
-  } catch { /* gm-mode optional */ }
-  if (gmPd) {
-    parts.push('[GM_STRATEGY]\nThe owner has committed to this strategy. IMPORTANT: honor it in every recommendation.\n'
-      + window.WR.GmMode.promptBlock(null, gmPd));
-  } else {
-    const gmStrat = window._wrGmStrategy;
-    if (gmStrat && (gmStrat.mode !== 'balanced' || gmStrat.riskTolerance !== 'moderate' || gmStrat.untouchable?.length || gmStrat.targets?.length || gmStrat.notes)) {
-      const stratParts = [`Mode: ${gmStrat.mode}`, `Risk: ${gmStrat.riskTolerance}`];
-      if (gmStrat.untouchable?.length) {
-        const S2 = window.S || {};
-        const names = gmStrat.untouchable.map(pid => S2.players?.[pid]?.full_name || pid).join(', ');
-        stratParts.push(`Untouchable players: ${names}`);
-      }
-      if (gmStrat.targets?.length) stratParts.push(`Targeting in trades: ${gmStrat.targets.join(', ')}`);
-      const posNeeds = Object.entries(gmStrat.positionalNeeds || {}).filter(([,v]) => v >= 7).map(([pos,v]) => `${pos}(${v}/10)`);
-      if (posNeeds.length) stratParts.push(`High priority positions: ${posNeeds.join(', ')}`);
-      if (gmStrat.notes) stratParts.push(`Owner notes: "${gmStrat.notes}"`);
-      parts.push('[GM_STRATEGY]\nThe owner has set the following strategic preferences. IMPORTANT: Honor these when making recommendations.\n' + stratParts.join('\n'));
-    }
-  }
-
-  // ── Commissioner league docs (bylaws, awards, custom rules) ──
-  // Loaded async and cached in window for this session
-  if (window._leagueDocsContext) {
-    parts.push('[LEAGUE_DOCUMENTS]\nThe commissioner has uploaded these league-specific documents. Use them to answer league rule questions, reference awards history, and understand league customs:\n' + window._leagueDocsContext);
-  }
-
-  // ── League format detection ──────────────────────────────────
-  const _S = window.S || window.App?.S || {};
-  const formatBlock = dhqBuildLeagueFormatBlock();
-  if (formatBlock) parts.push(formatBlock);
-
-  const behaviorBlock = dhqBuildBehaviorContext();
-  if (behaviorBlock) parts.push(behaviorBlock);
-
-  const recommendationBlock = dhqBuildRecommendationContext();
-  if (recommendationBlock) parts.push(recommendationBlock);
-
-  // ── Team mode context ────────────────────────────────────────
-  const myAssess = typeof assessTeamFromGlobal === 'function' ? assessTeamFromGlobal(_S.myRosterId) : null;
-  const tier = myAssess?.tier || '';
-  const teamWindow = myAssess?.window || '';
-
-  let modeBlock = '[TEAM_MODE]\n';
-  if (gmPd) {
-    // A committed GM Strategy OWNS the mode: rules derive from the CHOSEN
-    // plan so this block can never contradict [GM_STRATEGY]. The roster
-    // assessment demotes to a one-line reality check when it disagrees.
-    if (gmPd.mode === 'rebuild') {
-      modeBlock += 'Mode: REBUILD (GM-committed strategy)\n';
-      modeBlock += 'Rules:\n';
-      modeBlock += '- ONLY recommend youth (age 25 or younger) and draft picks\n';
-      modeBlock += '- Sell aging veterans (27+ with declining production) for picks/youth\n';
-      modeBlock += '- FAAB: only bid on young upside or emergency injury replacements\n';
-      modeBlock += '- Never recommend "depth" pickups of veterans\n';
-      modeBlock += '- Patience is a strategy — don\'t make moves just to make moves\n';
-    } else if (gmPd.mode === 'win_now') {
-      modeBlock += 'Mode: WIN NOW (GM-committed strategy)\n';
-      modeBlock += 'Rules:\n';
-      modeBlock += '- Recommend proven starters who produce THIS season\n';
-      modeBlock += '- Trade future picks for upgrades at weak spots\n';
-      modeBlock += '- FAAB: bid aggressively on difference-makers who would start\n';
-      modeBlock += '- Don\'t recommend speculative youth projects that won\'t help now\n';
-    } else if (gmPd.mode === 'compete') {
-      modeBlock += 'Mode: COMPETE (GM-committed strategy)\n';
-      modeBlock += 'Rules:\n';
-      modeBlock += '- Balance present and future — favor players aged 24-27 with 3+ peak years left\n';
-      modeBlock += '- Trade aging assets only at peak value; no fire sales\n';
-      modeBlock += '- FAAB: moderate bids on players who upgrade a starting spot\n';
-      modeBlock += '- Never mortgage multiple future firsts for a rental\n';
-    } else {
-      modeBlock += 'Mode: CUSTOM (GM-committed strategy)\n';
-      modeBlock += 'Rules:\n';
-      modeBlock += '- Follow the [GM_STRATEGY] block exactly — aggression, postures, positions, and sell rules as configured\n';
-    }
-    const assessedMode = (tier === 'REBUILDING' || teamWindow === 'REBUILDING') ? 'rebuild'
-      : (tier === 'ELITE' || tier === 'CONTENDER' || teamWindow === 'CONTENDING') ? 'win_now'
-      : '';
-    if (assessedMode && assessedMode !== gmPd.mode) {
-      modeBlock += 'Reality check: roster grades ' + (tier || teamWindow) + ' while the GM has committed to '
-        + String(gmPd.modeLabel || gmPd.mode).toUpperCase()
-        + ' — acknowledge the tension, follow the GM\'s direction.\n';
-    }
-  } else if (tier === 'REBUILDING' || teamWindow === 'REBUILDING') {
-    modeBlock += 'Mode: REBUILD\n';
-    modeBlock += 'Rules:\n';
-    modeBlock += '- ONLY recommend youth (age 25 or younger) and draft picks\n';
-    modeBlock += '- Sell aging veterans (27+ with declining production) for picks/youth\n';
-    modeBlock += '- FAAB: only bid on young upside or emergency injury replacements\n';
-    modeBlock += '- Never recommend "depth" pickups of veterans\n';
-    modeBlock += '- Patience is a strategy — don\'t make moves just to make moves\n';
-  } else if (tier === 'ELITE' || tier === 'CONTENDER' || teamWindow === 'CONTENDING') {
-    modeBlock += 'Mode: CONTEND (win now)\n';
-    modeBlock += 'Rules:\n';
-    modeBlock += '- Recommend proven starters who produce THIS season\n';
-    modeBlock += '- Trade future picks for upgrades at weak spots\n';
-    modeBlock += '- FAAB: bid aggressively on difference-makers who would start\n';
-    modeBlock += '- Don\'t recommend speculative youth projects that won\'t help now\n';
-  } else {
-    modeBlock += 'Mode: CROSSROADS (must commit to a direction)\n';
-    modeBlock += 'Rules:\n';
-    modeBlock += '- Team must pick: push for contention or begin rebuild\n';
-    modeBlock += '- No half-measures — don\'t recommend generic "add depth"\n';
-    modeBlock += '- Analyze which direction makes more sense given age profile and picks\n';
-  }
-  parts.push(modeBlock);
-
-  // ── Quality thresholds ───────────────────────────────────────
-  let qualityBlock = '[QUALITY_RULES]\n';
-  qualityBlock += '- NEVER recommend players with DHQ below 500 — not worth a roster spot\n';
-  qualityBlock += '- NEVER recommend players averaging below 5.0 PPG with 6+ games — below replacement\n';
-  qualityBlock += '- NEVER recommend "depth for depth\'s sake" — a bad player wastes a roster spot\n';
-  qualityBlock += '- If no quality free agents exist, say "HOLD YOUR FAAB — no impactful targets available"\n';
-  qualityBlock += '- Remaining FAAB is a weapon for mid-season breakouts and injuries — preserve it\n';
-  parts.push(qualityBlock);
-
-  return parts.join('\n\n');
-}
-
 // Compact context builder — assembles labeled JSON sections for chat
 function dhqCompactContext() {
   const parts = [];
@@ -1355,7 +1153,6 @@ Object.assign(window.App, {
   DHQ_PROMPTS,
   dhqAI,
   fetchDynastyRead,
-  dhqContext,
   dhqCompactContext,
   dhqBuildRosterContext,
   dhqBuildMentalityContext,
@@ -1380,7 +1177,6 @@ Object.assign(window, {
   DHQ_PROMPTS,
   dhqAI,
   fetchDynastyRead,
-  dhqContext,
   dhqCompactContext,
   dhqBuildRosterContext,
   dhqBuildMentalityContext,

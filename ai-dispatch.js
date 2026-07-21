@@ -61,25 +61,21 @@ const PROVIDERS = {
 };
 
 const AI_ROUTES = {
-  // Home chat is Alex's flagship conversational surface and carries the richest
-  // persona instructions — it needs a model that can actually hold the voice, so
-  // it runs on standard (still Gemini-balanced, still inexpensive), matching the
-  // hosted edge-function route for the same surface.
-  'home-chat': 'standard',
   // Background/utility surfaces stay on the cheapest tier.
   'memory-summary': 'fast',
   'power-posts': 'fast',
   'recon-chat': 'fast',
   // Normal analysis uses the standard price/performance tier.
-  'waiver-chat': 'standard',
   'waiver-agent': 'standard',
   'draft-chat': 'standard',
   'strategy-analysis': 'standard',
+  // Fast fail-fast per-pick reaction (1-2 sentences, maxTokens 200) — not
+  // deep reasoning, shouldn't ride the premium tier.
+  'pick-analysis': 'standard',
   // Deep reasoning is explicit premium usage.
   'trade-chat': 'premium',
   'trade-scout': 'premium',
   'draft-scout': 'premium',
-  'pick-analysis': 'premium',
   'player-scout': 'premium',
   'deep-analysis': 'deep',
   'league-report': 'deep',

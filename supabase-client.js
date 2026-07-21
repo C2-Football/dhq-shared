@@ -189,14 +189,11 @@ window.OD.acquireSessionToken = async function(username, password) {
 // ══════════════════════════════════════════════════════════════════
 
 // Free-tier tripwire (belt-and-suspenders — the per-surface trigger gates are
-// the real guarantee): free users' server AI is limited to explicit
-// user-initiated chat types; any other type reaching here is an ambient leak
-// whose surface gate failed. No-op for paid tiers; fails open when tier
-// plumbing isn't loaded (local preview, standalone pages).
-// 'draft-chat' = warroom draft-room Ask Alex (explicit, rides the same daily
-// allowance); 'memory-summary' only fires as a rider on an already-allowed
-// free chat, so its cost is bounded by the chat quota.
-const FREE_AI_TYPE_ALLOWLIST = ['recon-chat', 'home-chat', 'rookie-scout', 'trade-scout', 'draft-chat', 'memory-summary'];
+// the real guarantee): AI is fully Pro-gated now (chat's old free daily
+// allowance is retired, not replaced) — no type is free-allowed. No-op for
+// paid tiers; fails open when tier plumbing isn't loaded (local preview,
+// standalone pages), same as before.
+const FREE_AI_TYPE_ALLOWLIST = [];
 
 window.OD.callAI = async function({ type, context }) {
     if (typeof window.isScoutPro === 'function' && !window.isScoutPro()
