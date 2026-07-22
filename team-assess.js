@@ -554,7 +554,17 @@ window.App = window.App || {};
     const LI = window.App?.LI || window.LI || {};
     const rosters = S.rosters || [];
     let fp = '';
-    for (const r of rosters) fp += r.roster_id + ':' + ((r.players || []).join('.')) + ';';
+    for (const r of rosters) {
+      const st = r.settings || {};
+      // wins/losses/ties/fpts feed panic/tradeWindow (assessTeam ~L319-322),
+      // waiver_budget_used feeds the FAAB read (~L325) — sync-manager.js
+      // refreshes these on rosters in place during the season without
+      // necessarily changing the player list, so they must be part of the
+      // signature or a stale assessment gets served after every result comes in.
+      fp += r.roster_id + ':' + ((r.players || []).join('.'))
+        + ':' + (st.wins || 0) + ',' + (st.losses || 0) + ',' + (st.ties || 0)
+        + ',' + (st.fpts || 0) + '.' + (st.fpts_decimal || 0) + ',' + (st.waiver_budget_used || 0) + ';';
+    }
     return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
   }
 
