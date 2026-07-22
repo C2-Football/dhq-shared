@@ -828,18 +828,6 @@ async function dhqAI(type, message, context, options) {
   if (newsContext) fullContext += newsContext + '\n';
   if (context) fullContext += context + '\n\n';
 
-  // Inject league memory for context-rich types.
-  // NOTE: 'pick-analysis' is intentionally excluded — it fires on every qualifying
-  // draft pick and is a 1-2 sentence reaction that needs no league-memory continuity.
-  // Skipping it removes a Supabase memory READ per pick (less network noise, snappier).
-  const memoryTypes = ['trade-chat','draft-chat','trade-scout','player-scout'];
-  if (memoryTypes.includes(type)) {
-    try {
-      const memCtx = await buildMemoryContext(window.S?.currentLeagueId);
-      if (memCtx) fullContext += memCtx + '\n\n';
-    } catch (e) {}
-  }
-
   // Construct messages array
   let messages;
   if (options?.messages) {
