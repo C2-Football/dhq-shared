@@ -335,6 +335,12 @@ window.App.PlayerValue = (function () {
     // if gross-points players — backup QBs/streamers — still rank above flex starters.
     const ROS_GROSS_WT = 0.35, ROS_VOR_WT = 0.65;
 
+    // Keeper value = dynasty-leaning blend of long-term DHQ and this-season ROS.
+    // A keeper call is closer to a 1-year-ahead dynasty question than to "points
+    // left this season," so weight dynasty higher than a straight split. Tunable —
+    // revisit if real usage shows misranking (e.g. ageing vets held too high).
+    const KEEPER_DYNASTY_WT = 0.6, KEEPER_ROS_WT = 0.4;
+
     function _currentLeagueId() {
         return String(window.S?.currentLeagueId
             || window.App?.LeagueSkin?.getCurrent?.()?.leagueId || '');
@@ -342,6 +348,10 @@ window.App.PlayerValue = (function () {
     function _isRedraft(skin) {
         const s = skin || window.App?.LeagueSkin?.getCurrent?.() || null;
         return !!s && s.type === 'redraft';
+    }
+    function _isKeeper(skin) {
+        const s = skin || window.App?.LeagueSkin?.getCurrent?.() || null;
+        return !!s && s.type === 'keeper';
     }
 
     // Healthy, neutral-matchup per-week median for a player, league-scored.
@@ -377,7 +387,10 @@ window.App.PlayerValue = (function () {
     function ensureRos(ctx) {
         ctx = ctx || {};
         const skin = ctx.skin || window.App?.LeagueSkin?.getCurrent?.() || null;
-        if (!_isRedraft(skin)) { _ros = null; return null; }
+        // Keeper leagues need the same ROS/VOR map built (getKeeperValue blends
+        // it with dynasty DHQ below) — getValue()/getRosPoints() still gate
+        // strictly on redraft, so this widening doesn't change what they return.
+        if (!_isRedraft(skin) && !_isKeeper(skin)) { _ros = null; return null; }
         const league = ctx.league || skin?.league || {};
         const leagueId = String(ctx.leagueId || league.league_id || league.id || _currentLeagueId());
         const WP = window.App?.WeeklyProj;
@@ -460,6 +473,23 @@ window.App.PlayerValue = (function () {
         }
         return (window.App?.LI?.playerScores?.[pid]) || 0;
     }
+    // Keeper-adjusted value: blends dynasty DHQ with Rest-of-Season value.
+    // Standalone — does NOT touch getValue()/valueMap(), so every existing
+    // consumer keeps returning pure dynasty for keeper leagues exactly as
+    // before; only a surface that explicitly calls this opts into the blend.
+    function getKeeperValue(pid, opts) {
+        opts = opts || {};
+        const dynastyVal = (window.App?.LI?.playerScores?.[pid]) || 0;
+        if (!dynastyVal) return 0;
+        const rosReady = _ros && _ros.leagueId === _currentLeagueId() && _ros.values[pid] != null && _ros.values[pid] > 0;
+        // No ROS signal (unprojectable rookie/stash, or ROS not built) → lean
+        // on dynasty alone. ensureRos() explicitly zero-pins unprojectable
+        // players for redraft display purposes — that 0 means "no redraft
+        // trade value," not "no keeper value," so it must not drag this blend
+        // toward zero for exactly the stashes a keeper call cares most about.
+        if (!rosReady) return dynastyVal;
+        return Math.min(10000, Math.round(KEEPER_DYNASTY_WT * dynastyVal + KEEPER_ROS_WT * _ros.values[pid]));
+    }
     // Raw projected ROS points for display (null when not built for this league).
     function getRosPoints(pid) {
         if (_ros && _ros.leagueId === _currentLeagueId()) return _ros.points[pid] != null ? _ros.points[pid] : null;
@@ -497,6 +527,7 @@ window.App.PlayerValue = (function () {
         projectPlayerValue,
         ensureRos,
         getValue,
+        getKeeperValue,
         getRosPoints,
         rosState,
         valueMap,

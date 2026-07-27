@@ -780,6 +780,42 @@ window.App = window.App || {};
     return base;
   }
 
+  // ── Keeper verdict ──────────────────────────────────────────────
+  // Should-I-keep-him read for keeper leagues. Simpler than getPlayerAction:
+  // only ever called on the caller's own roster (you can't keep a player you
+  // don't own), so it skips the ownership/positional-surplus lookup and the
+  // GM Strategy layer entirely — a trade-posture framing that doesn't map
+  // onto a capped-slot keep/don't-keep call.
+  function getKeeperAction(pid) {
+    const LI = window.App?.LI || {};
+    const meta = LI.playerMeta?.[pid];
+    const skin = window.App?.LeagueSkin?.getCurrent?.() || null;
+    // Defensive fallback: this file is shared with War Room Scout, which
+    // doesn't load warroom's js/utils/player-value.js (getKeeperValue lives
+    // there). Degrade to pure dynasty rather than throwing if it's absent —
+    // same shape getPlayerAction already uses for getDynastyValue/dynastyValue.
+    const val = (typeof window.App?.PlayerValue?.getKeeperValue === 'function')
+      ? window.App.PlayerValue.getKeeperValue(pid, { skin })
+      : (typeof getDynastyValue === 'function') ? getDynastyValue(pid) :
+        (typeof dynastyValue === 'function') ? dynastyValue(pid) : (LI.playerScores?.[pid] || 0);
+
+    if (!meta || val <= 0) return { action: 'UNKNOWN', label: '—', reason: 'Not enough data', col: 'var(--accent)', bg: 'var(--accentL)', keeperValue: 0 };
+
+    const peakYrsLeft = meta.peakYrsLeft || 0;
+    const trend = meta.trend || 0;
+    const _isElite = typeof window.App?.isElitePlayer === 'function' ? window.App.isElitePlayer(pid) : val >= 7000;
+
+    if (meta.source === 'FC_ROOKIE') return { action: 'STASH_KEEP', label: 'Stash & Keep', reason: 'Rookie upside worth a keeper slot while he is cheap', col: 'var(--blue)', bg: 'var(--blueL)', keeperValue: val };
+    if (_isElite && peakYrsLeft >= 2) return { action: 'ELITE_KEEP', label: 'Elite Keeper', reason: 'Top-tier value that still profiles well next season', col: 'var(--green)', bg: 'var(--greenL)', keeperValue: val };
+    if (val >= 4000 && peakYrsLeft >= 1 && trend > -10) return { action: 'KEEP', label: 'Keep', reason: 'Strong value with next-season upside intact', col: 'var(--green)', bg: 'var(--greenL)', keeperValue: val };
+    if (val >= 2000) {
+      return trend <= -10
+        ? { action: 'BORDERLINE', label: 'Borderline', reason: 'Value holds but production is trending down — weigh against your draft class', col: 'var(--amber)', bg: 'var(--amberL)', keeperValue: val }
+        : { action: 'BORDERLINE', label: 'Borderline', reason: 'Roughly replaceable in next year’s draft — only worth it if a slot is open', col: 'var(--amber)', bg: 'var(--amberL)', keeperValue: val };
+    }
+    return { action: 'DRAFT_INSTEAD', label: 'Draft Instead', reason: 'Value doesn’t clear a keeper slot — better spent on a fresh pick', col: 'var(--red)', bg: 'var(--redL)', keeperValue: val };
+  }
+
   // ─────────────────────────────────────────────────────────────
   // Expose on window.App and window
   // ─────────────────────────────────────────────────────────────
@@ -807,9 +843,11 @@ window.App = window.App || {};
 
   // Player action recommendation
   window.App.getPlayerAction = getPlayerAction;
+  window.App.getKeeperAction = getKeeperAction;
 
   // Also expose on window for direct access
   window.getPlayerAction              = getPlayerAction;
+  window.getKeeperAction              = getKeeperAction;
   window.buildNflStarterSetShared     = buildNflStarterSet;
   window.calcOptimalPPGShared         = calcOptimalPPG;
   window.assessTeamShared             = assessTeam;
