@@ -32,6 +32,9 @@
     espnProxy: `${functionsBase}/espn-proxy`,
     mflProxy: `${functionsBase}/mfl-proxy`,
     yahooProxy: `${functionsBase}/yahoo-proxy`,
+    // Cached ESPN scoreboard relay (Vegas/weather/schedule). nfl-context.js
+    // falls back to the dev proxy path /api/nfl-scoreboard when unset.
+    nflScoreboard: `${functionsBase}/nfl-scoreboard`,
     adminListUsers: `${functionsBase}/admin-list-users`,
     fwSignup: `${functionsBase}/fw-signup`,
     fwSignin: `${functionsBase}/fw-signin`,
