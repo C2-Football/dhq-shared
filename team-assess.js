@@ -123,7 +123,9 @@ window.App = window.App || {};
   function buildNflStarterSet(players, playerStats, nflStarterPool) {
     const pool = nflStarterPool || buildNflStarterPool(12);
     const nflStarterSet = {};
-    const scoreMap = window.App?.LI?.playerScores || window.LI?.playerScores || null;
+    // Format-aware ordering: ROS values in redraft, dynasty elsewhere.
+    const scoreMap = (window.App?.PlayerValue?.valueMap ? window.App.PlayerValue.valueMap() : null)
+      || window.App?.LI?.playerScores || window.LI?.playerScores || null;
     const sourceIds = scoreMap ? Object.keys(scoreMap) : Object.keys(players || {});
     // Single pass over the source list, bucketing by position — was 9 full scans
     // (one per DEPTH_POSITION), each re-walking the whole ~2k-12k list and re-
@@ -630,6 +632,37 @@ window.App = window.App || {};
   function getPlayerAction(pid) {
     const S = window.S || window.App?.S || {};
     const LI = window.App?.LI || {};
+
+    // ── Redraft branch ────────────────────────────────────────────
+    // Age curves, peak windows, and Buy/Sell dynasty language have no
+    // meaning in a one-season league (owner doctrine 2026-08-02). Verdicts
+    // come from the ROS ladder: where the player sits against the league's
+    // own replacement line. The dynasty chain below never runs.
+    const PV = window.App?.PlayerValue;
+    if (PV?.isRedraftActive?.()) {
+      const ros = PV.rosState();
+      const pts = ros?.points?.[pid] || 0;
+      const posR = playerPos(pid, S.players || {});
+      const perWk = ros && ros.remainingWeeks ? pts / ros.remainingWeeks : 0;
+      const repl = (ros?.replacementPerWk || {})[posR] || 0;
+      const rosterR = S.rosters?.find(r =>
+        r.owner_id === (S.myUserId || S.user?.user_id) ||
+        (r.co_owners || []).includes(S.myUserId || S.user?.user_id)
+      );
+      const ownedR = (rosterR?.players || []).map(String).includes(String(pid));
+      if (!pts || !repl) {
+        return ownedR
+          ? { action: 'DROP', label: 'Droppable', reason: 'No projected role this season', col: 'var(--red)', bg: 'var(--redL)' }
+          : { action: 'PASS', label: 'Pass', reason: 'No projected role this season', col: 'var(--silver, #BDB8AD)', bg: 'var(--accentL)' };
+      }
+      if (perWk >= repl * 1.35) return { action: 'START', label: ownedR ? 'Start' : 'Trade For', reason: 'Every-week starter — well above the replacement line at ' + posR, col: 'var(--green)', bg: 'var(--greenL)' };
+      if (perWk >= repl) return { action: 'START', label: ownedR ? 'Start' : 'Add', reason: 'Above replacement at ' + posR + ' — startable', col: 'var(--accent)', bg: 'var(--accentL)' };
+      if (perWk >= repl * 0.75) return { action: 'BENCH', label: 'Depth', reason: 'Below the startable line — bye/injury cover', col: 'var(--amber)', bg: 'var(--amberL)' };
+      return ownedR
+        ? { action: 'DROP', label: 'Streamable', reason: 'Replacement-level — this roster spot is fungible', col: 'var(--amber)', bg: 'var(--amberL)' }
+        : { action: 'PASS', label: 'Pass', reason: 'Replacement-level at ' + posR, col: 'var(--silver, #BDB8AD)', bg: 'var(--accentL)' };
+    }
+
     const meta = LI.playerMeta?.[pid];
     const val = (typeof getDynastyValue === 'function') ? getDynastyValue(pid) :
                 (typeof dynastyValue === 'function') ? dynastyValue(pid) :

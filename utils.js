@@ -60,8 +60,10 @@ function calcRawPts(stats, scoring) {
 }
 
 // ── Elite player detection (7000+ DHQ OR top-5-at-position) ────
+// Format-aware: in redraft leagues the map proxies to ROS values (same
+// 0-10000 ceiling anchor), so 'elite' means elite THIS season there.
 function isElitePlayer(pid) {
-  const scores = window.App?.LI?.playerScores || {};
+  const scores = (window.App?.PlayerValue?.valueMap ? window.App.PlayerValue.valueMap() : null) || window.App?.LI?.playerScores || {};
   const meta = window.App?.LI?.playerMeta || {};
   const id = String(pid);
   const score = Number(scores[id] ?? scores[pid] ?? 0);
