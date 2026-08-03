@@ -150,6 +150,27 @@
         return line;
     }
 
+    // Season-long baseline for ROS/redraft values: the provider's SEASON
+    // projection line is the shared public baseline (role-, depth- and
+    // rookie-aware, identical for every league — the league differentiates by
+    // SCORING it, never by changing it), and actual play takes over as games
+    // accrue. preW is the preseason projection weight; its influence decays
+    // linearly to zero by 6 games played, mirroring buildBaseline's own
+    // season ramp. Falls back cleanly: no projection row → historical blend;
+    // no history (rookies) → pure projection line.
+    function buildSeasonBaseline(pid, season, prior, projSeason, scoring, week, preW) {
+        const ss = SS();
+        if (!ss) return null;
+        const projLine = ss.perGameLine(projSeason, Number(projSeason && projSeason.gp) || 18);
+        const hist = buildBaseline(pid, season, prior, scoring, week);
+        if (!projLine) return hist;
+        if (!hist) return projLine;
+        const seasonGp = Number(season && season.gp) || 0;
+        const w = (preW == null ? 0.85 : preW) * Math.max(0, 1 - seasonGp / 6);
+        if (w <= 0) return hist;
+        return ss.blendLines([{ line: projLine, weight: w }, { line: hist, weight: 1 - w }]);
+    }
+
     function isByeOrOut(player, ctx, pid, week) {
         const sleeperStatus = (player && player.injury_status) || '';
         const ctxStatus = ctx && ctx.injury && ctx.injury[pid];
@@ -236,7 +257,7 @@
     }
 
     App.WeeklyProj = App.WeeklyProj || {
-        setContext, currentWeek, recentPPG, weeklyHistory, formStats, buildBaseline,
+        setContext, currentWeek, recentPPG, weeklyHistory, formStats, buildBaseline, buildSeasonBaseline,
         projectPlayer, projectRoster, optimalForRoster,
         ensureWeekProjections, providerLine,
         objectiveForMode, modeFor,
