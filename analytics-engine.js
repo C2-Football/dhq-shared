@@ -120,9 +120,10 @@ function analyzeDraftPatterns(winners, losers) {
   const leagueDraftProfile = {};
   const winnerHitRate = {};
   const bestPositionByRound = {};
+  const winnerPosHitRate = {};
 
   if (!draftOutcomes.length) {
-    return { winnerDraftProfile, leagueDraftProfile, winnerHitRate, bestPositionByRound };
+    return { winnerDraftProfile, leagueDraftProfile, winnerHitRate, bestPositionByRound, winnerPosHitRate };
   }
 
   // Group picks by round
@@ -185,9 +186,43 @@ function analyzeDraftPatterns(winners, losers) {
       });
     }
     bestPositionByRound[rd] = bestPos || 'RB';
+
+    // Full winner-scoped position ranking (same min-2-samples rule as bestPos
+    // above, but keeps every qualifying position, not just the top one) — this
+    // is what 'ideal draft strategy' should read, since Round Conversion and
+    // Winner Formula are both winner-vs-field too. A title-tier sample is
+    // often too thin at the round×position grain (a 12-team league might have
+    // 2-3 winner picks in a round total), so a round with NO winner position
+    // clearing 2 samples falls back to the league-wide hitByRoundPos ranking
+    // instead of going empty — flagged via `source` so the UI can disclose it
+    // rather than passing a league-wide number off as a champion one.
+    const winnerRanked = Object.entries(winnerPosCounts)
+      .filter(([, cnt]) => cnt >= 2)
+      .map(([pos, cnt]) => {
+        const hits = winnerPicks.filter(d => d.pos === pos && (d.isStarter || d.isHit)).length;
+        return { pos, rate: Math.round((hits / cnt) * 100), total: cnt, starters: hits };
+      })
+      .sort((a, b) => b.rate - a.rate);
+    let posSource = 'winners';
+    let posRanked = winnerRanked;
+    if (!posRanked.length) {
+      posSource = 'league';
+      posRanked = Object.entries(hitByRoundPos)
+        .filter(([key]) => key.startsWith('R' + rd + '_') && key.split('_')[1] !== 'UNK')
+        .map(([key, data]) => ({ pos: key.split('_')[1], rate: data.total >= 2 ? Math.round((data.starters / data.total) * 100) : 0, total: data.total, starters: data.starters }))
+        .filter(p => p.total >= 2)
+        .sort((a, b) => b.rate - a.rate);
+    }
+    const winnerElite = winnerPicks.filter(d => d.isHit).length;
+    winnerPosHitRate[rd] = {
+      source: posSource, ranked: posRanked,
+      total: winnerTotal,
+      rate: winnerPicks.length > 0 ? Math.round((winnerStarters / winnerPicks.length) * 100) : 0,
+      eliteRate: winnerPicks.length > 0 ? Math.round((winnerElite / winnerPicks.length) * 100) : 0,
+    };
   }
 
-  return { winnerDraftProfile, leagueDraftProfile, winnerHitRate, bestPositionByRound };
+  return { winnerDraftProfile, leagueDraftProfile, winnerHitRate, bestPositionByRound, winnerPosHitRate };
 }
 
 // ── Section 3: Waiver Intelligence ───────────────────────────────
