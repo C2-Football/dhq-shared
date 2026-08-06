@@ -494,7 +494,18 @@ window.App.PlayerValue = (function () {
         // late-season redraft surfaces from reverting to dynasty pricing.
         const pws = Number(league.settings?.playoff_week_start) || 15;
         const seasonEnd = pws >= 16 ? 18 : 17;
-        const remainingWeeks = Math.max(0, seasonEnd - week);
+        const calendarWeeks = Math.max(0, seasonEnd - week);
+        // CHOPPED: the calendar is a lie. What a player is worth to you is
+        // capped by how many more weeks you can expect to be ALIVE, so the
+        // horizon is the survival expectation when we have one. This is
+        // rank-neutral on its own (a uniform multiplier cancels in the
+        // bestVOR scale) — its real bite is the BYE deduction below: losing
+        // one week out of an expected three is a third of your remaining
+        // season, where out of thirteen it is a rounding error.
+        const survival = ctx.horizonWeeks != null
+            ? Number(ctx.horizonWeeks)
+            : (window.App?.ChopOdds?.horizonFor?.(leagueId, null));
+        const remainingWeeks = (survival > 0 && survival < calendarWeeks) ? survival : calendarWeeks;
         if (remainingWeeks <= 0) { _ros = null; return null; } // season truly over
 
         const projWeek = week + 1;
@@ -552,8 +563,10 @@ window.App.PlayerValue = (function () {
             if (perWk <= 0 || !pos) { points[pid] = 0; values[pid] = 0; continue; }
             const player = playersData[pid];
             const bye = player ? Number(player.bye_week) : 0;
-            const byeInWindow = bye > week && bye <= seasonEnd;
-            const effWeeks = remainingWeeks - (byeInWindow ? 1 : 0);
+            // The bye only costs you if it lands inside the weeks you expect to
+            // PLAY — which under a survival horizon is shorter than the season.
+            const byeInWindow = bye > week && bye <= Math.min(seasonEnd, week + remainingWeeks);
+            const effWeeks = Math.max(0, remainingWeeks - (byeInWindow ? 1 : 0));
             points[pid] = Math.max(0, Math.round(perWk * effWeeks * 10) / 10); // raw projected ROS pts (display)
             const repl = replacementPerWk[pos] || 0;
             const lineupVal = perWk * ROS_GROSS_WT + Math.max(0, perWk - repl) * ROS_VOR_WT; // scarcity-weighted per-week value
