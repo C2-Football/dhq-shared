@@ -366,9 +366,12 @@ window.App.PlayerValue = (function () {
         return String(window.S?.currentLeagueId
             || window.App?.LeagueSkin?.getCurrent?.()?.leagueId || '');
     }
+    // CHOPPED counts as redraft here: it is a one-season format, so value is
+    // rest-of-season, never dynasty. (The survival-weighted horizon is a
+    // later phase — season-end is already vastly closer than dynasty DHQ.)
     function _isRedraft(skin) {
         const s = skin || window.App?.LeagueSkin?.getCurrent?.() || null;
-        return !!s && s.type === 'redraft';
+        return !!s && (s.type === 'redraft' || s.type === 'chopped');
     }
     function _isKeeper(skin) {
         const s = skin || window.App?.LeagueSkin?.getCurrent?.() || null;
