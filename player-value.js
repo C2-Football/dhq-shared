@@ -446,12 +446,61 @@ window.App.PlayerValue = (function () {
     // position across the league. Reuses the dynasty engine's flex-aware per-team slot
     // count (lineupContext.perTeamSlots) when available; falls back to league starter
     // counts, then a sane per-position default. Used to compute value-over-replacement.
-    function _replacementRank(pos, totalTeams) {
+    function _replacementRank(pos, totalTeams, slotsOverride) {
+        // slotsOverride lets a caller price a league OTHER than the one whose
+        // LeagueIntel happens to be loaded — the whole point of Empire's
+        // mark-to-league pass. Without it, behaviour is unchanged.
+        if (slotsOverride && slotsOverride[pos] > 0) return Math.max(1, Math.round(totalTeams * slotsOverride[pos]));
+        if (slotsOverride) return Math.max(1, Math.round(totalTeams * ({ QB:1, RB:2, WR:3, TE:1, K:1, DL:3, LB:2, DB:3 }[pos] || 1)));
         const lc = window.App?.LI?.lineupContext?.position?.[pos];
         const sc = window.App?.LI?.starterCounts?.[pos];
         const slotsPerTeam = (lc && lc.perTeamSlots > 0) ? lc.perTeamSlots
                            : (sc > 0 ? sc : ({ QB:1, RB:2, WR:3, TE:1, K:1, DL:3, LB:2, DB:3 }[pos] || 1));
         return Math.max(1, Math.round(totalTeams * slotsPerTeam));
+    }
+
+    // Starting slots per team, per position, straight from roster_positions —
+    // flex-aware. FLEX/SUPER_FLEX demand is spread across the positions that
+    // can legally fill them, which is what makes a superflex league price QBs
+    // like the scarce asset they are. Pure: no globals, so Empire can call it
+    // once per league.
+    const _FLEX_ELIGIBLE = {
+        FLEX: ['RB', 'WR', 'TE'],
+        WR_RB_FLEX: ['RB', 'WR'],
+        REC_FLEX: ['WR', 'TE'],
+        SUPER_FLEX: ['QB', 'RB', 'WR', 'TE'],
+        QB_FLEX: ['QB', 'RB', 'WR', 'TE'],
+        OP: ['QB', 'RB', 'WR', 'TE'],
+        IDP_FLEX: ['DL', 'LB', 'DB'],
+    };
+    // How a flex slot's demand splits across its eligible positions. SUPER_FLEX
+    // is overwhelmingly a QB slot in practice, so it is weighted that way
+    // rather than split evenly — an even split would understate QB scarcity,
+    // which is the single biggest cross-league price difference there is.
+    const _FLEX_SHARE = {
+        SUPER_FLEX: { QB: 0.75, RB: 0.08, WR: 0.12, TE: 0.05 },
+        QB_FLEX: { QB: 0.75, RB: 0.08, WR: 0.12, TE: 0.05 },
+        OP: { QB: 0.75, RB: 0.08, WR: 0.12, TE: 0.05 },
+        FLEX: { RB: 0.35, WR: 0.5, TE: 0.15 },
+        WR_RB_FLEX: { RB: 0.45, WR: 0.55 },
+        REC_FLEX: { WR: 0.75, TE: 0.25 },
+        IDP_FLEX: { DL: 0.34, LB: 0.33, DB: 0.33 },
+    };
+    function slotsFromRoster(rosterPositions) {
+        const out = {};
+        const bench = /^(BN|BE|BENCH|IR|TAXI|RES)$/i;
+        (rosterPositions || []).forEach(raw => {
+            const s = String(raw || '').toUpperCase();
+            if (!s || bench.test(s)) return;
+            if (_FLEX_ELIGIBLE[s]) {
+                const share = _FLEX_SHARE[s] || {};
+                _FLEX_ELIGIBLE[s].forEach(pos => { out[pos] = (out[pos] || 0) + (share[pos] || (1 / _FLEX_ELIGIBLE[s].length)); });
+                return;
+            }
+            const pos = (window.App?.normPos?.(s)) || s;
+            out[pos] = (out[pos] || 0) + 1;
+        });
+        return out;
     }
 
     // Build + cache the ROS value map. No-op (leaves _ros null → getValue
@@ -482,8 +531,34 @@ window.App.PlayerValue = (function () {
         if (!ctx.marketRedraft && _isRedraft(skin) && !ctx.noMarketFetch) _ensureRosMarket(league, leagueId);
         const market = ctx.marketRedraft || (_rosMarket.leagueId === leagueId ? _rosMarket.map : null);
         if (_ros && _ros.leagueId === leagueId && _ros.week === week) return _ros; // cached
+        const built = computePrices({ ...ctx, league, leagueId, week, playersData, statsData, priorData, projectionsData, marketRedraft: market });
+        _ros = built;
+        return _ros;
+    }
 
-        const playerScores = window.App?.LI?.playerScores || null;
+    // ── Pure per-league price board ──────────────────────────────────
+    // Everything ensureRos used to do inline, with NO module cache written.
+    // That is what lets Empire mark every league to its OWN book at once:
+    // pass a league's scoring, roster slots and team count and get that
+    // league's board back, without disturbing the single-league _ros cache
+    // every other surface depends on.
+    //   ctx additionally accepts: perTeamSlots (from slotsFromRoster),
+    //   playerScores (universe/ceiling override), totalTeams.
+    function computePrices(ctx) {
+        ctx = ctx || {};
+        const S = window.S || {};
+        const league = ctx.league || {};
+        const leagueId = String(ctx.leagueId || league.league_id || league.id || '');
+        const WP = window.App?.WeeklyProj;
+        const week = Number(ctx.week) || (WP && WP.currentWeek ? WP.currentWeek() : 1);
+        const playersData = ctx.playersData || S.players || {};
+        const statsData = ctx.statsData || S.statsData || {};
+        const priorData = ctx.priorData || S.priorData || {};
+        const projectionsData = ctx.projectionsData || S.projectionsData || null;
+        const market = ctx.marketRedraft || null;
+        const perTeamSlots = ctx.perTeamSlots || null;
+
+        const playerScores = ctx.playerScores || window.App?.LI?.playerScores || null;
         // The dynasty engine is no longer a hard gate: with a projections map
         // the redraft board can build on any platform. No projections AND no
         // dynasty universe → nothing to price.
@@ -506,10 +581,10 @@ window.App.PlayerValue = (function () {
             ? Number(ctx.horizonWeeks)
             : (window.App?.ChopOdds?.horizonFor?.(leagueId, null));
         const remainingWeeks = (survival > 0 && survival < calendarWeeks) ? survival : calendarWeeks;
-        if (remainingWeeks <= 0) { _ros = null; return null; } // season truly over
+        if (remainingWeeks <= 0) return null; // season truly over
 
         const projWeek = week + 1;
-        const totalTeams = Number(league.total_rosters) || (S.rosters?.length) || 12;
+        const totalTeams = Number(ctx.totalTeams) || Number(league.total_rosters) || (S.rosters?.length) || 12;
 
         // ── Universe: dynasty-scored players ∪ provider-projected players ──
         // (doctrine: a projectable player must never be invisible in redraft
@@ -547,7 +622,7 @@ window.App.PlayerValue = (function () {
         for (const pos in byPos) {
             if (!pos) continue; // unknown-position bucket gets no replacement baseline (handled in pass 2)
             const arr = byPos[pos].sort((a, b) => b - a);
-            const rank = _replacementRank(pos, totalTeams);
+            const rank = _replacementRank(pos, totalTeams, perTeamSlots);
             replacementPerWk[pos] = arr[Math.min(rank, arr.length) - 1] || 0;
         }
 
@@ -573,7 +648,7 @@ window.App.PlayerValue = (function () {
             vor[pid] = Math.max(0, lineupVal * effWeeks);
             if (vor[pid] > maxVor) maxVor = vor[pid];
         }
-        if (maxVor <= 0) { _ros = null; return null; }
+        if (maxVor <= 0) return null;
 
         // ── Capped market calibration (FantasyCalc REDRAFT, league params) ──
         // Blend in VOR space so the scale anchor sees the calibrated board:
@@ -604,8 +679,7 @@ window.App.PlayerValue = (function () {
         const ceiling = bestDHQ > 0 ? bestDHQ : ROS_SCALE_CEILING;
         const scale = ceiling / maxVor;
         for (const pid in vor) values[pid] = Math.min(10000, Math.round(vor[pid] * scale));
-        _ros = { leagueId, week, remainingWeeks, points, values, scale, bestDHQ: ceiling, maxVor, replacementPerWk, marketApplied: !!market };
-        return _ros;
+        return { leagueId, week, remainingWeeks, points, values, scale, bestDHQ: ceiling, maxVor, replacementPerWk, marketApplied: !!market };
     }
 
     // Format-aware value: redraft (with ROS built for the current league) →
@@ -688,6 +762,8 @@ window.App.PlayerValue = (function () {
         resolvePickValue,
         projectPlayerValue,
         ensureRos,
+        computePrices,
+        slotsFromRoster,
         ensureRosFromState,
         isRedraftActive,
         getValue,

@@ -17,6 +17,11 @@
     // War Room free-agency filters — first-classed so they survive normalize
     // and reach Scout instead of being dropped as an opaque pass-through.
     faFilters: null,
+    // League's minimum FAAB waiver bid, user-set override. 0 = unset, fall
+    // back to the imported platform value (league.settings.waiver_budget_min).
+    // Some platforms/manual leagues don't expose that setting reliably, so
+    // this lets the user pin the real number FAAB recommendations pull from.
+    faabMinBid: 0,
     targetList: [],
     blockList: [],
     aggression: 'medium',
@@ -86,6 +91,7 @@
   function normalizeStrategy(strategy) {
     const normalized = { ...DEFAULT_STRATEGY, ...(strategy || {}) };
     normalized.timeline = normalizeTimeline(normalized.timeline);
+    normalized.faabMinBid = Math.max(0, Number(normalized.faabMinBid) || 0);
     normalized.targetPositions = normalizePositionList(normalized.targetPositions);
     normalized.sellPositions = normalizePositionList(normalized.sellPositions);
     // Preserve the rule's original shape — a free-text string stays a string
