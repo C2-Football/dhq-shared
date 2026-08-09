@@ -25,15 +25,15 @@ const AI_MODELS = {
 const AI_TIER_MODELS = {
   fast: { gemini: AI_MODELS.GEMINI_FAST, openai: AI_MODELS.OPENAI_FAST },
   standard: { gemini: AI_MODELS.GEMINI_BALANCED, openai: AI_MODELS.OPENAI_STANDARD },
-  premium: { anthropic: AI_MODELS.CLAUDE_REASONING, openai: AI_MODELS.OPENAI_PREMIUM },
-  deep: { anthropic: AI_MODELS.CLAUDE_DEEP },
+  premium: { gemini: AI_MODELS.GEMINI_BALANCED, anthropic: AI_MODELS.CLAUDE_REASONING, openai: AI_MODELS.OPENAI_PREMIUM },
+  deep: { gemini: AI_MODELS.GEMINI_BALANCED, anthropic: AI_MODELS.CLAUDE_DEEP },
 };
 
 const DEFAULT_PROVIDER_BY_TIER = {
   fast: 'gemini',
   standard: 'gemini',
-  premium: 'anthropic',
-  deep: 'anthropic',
+  premium: 'gemini',
+  deep: 'gemini',
 };
 
 const PROVIDERS = {
@@ -220,11 +220,19 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
     routeTier = null;
   }
 
-  // Web search only available on Anthropic — fall back if needed
+  // Web search only available on Anthropic. An explicit user override (they
+  // configured their own Anthropic key) still gets routed there. Auto-routed
+  // calls no longer default to Anthropic for anything, so there's no
+  // provider left to force onto — drop the search request instead of
+  // routing to a provider the user hasn't configured a key for.
   if (useWebSearch && effectiveProvider !== 'anthropic') {
-    effectiveProvider = 'anthropic';
-    effectiveModel = PROVIDERS.anthropic.defaultModel;
-    routeTier = routeTier === 'deep' ? 'deep' : 'premium';
+    if (userOverride) {
+      effectiveProvider = 'anthropic';
+      effectiveModel = PROVIDERS.anthropic.defaultModel;
+      routeTier = routeTier === 'deep' ? 'deep' : 'premium';
+    } else {
+      useWebSearch = false;
+    }
   }
 
   const sys = (typeof DHQ_IDENTITY !== 'undefined') ? DHQ_IDENTITY : 'Dynasty FF advisor. Values from DHQ (0-10000 scale, league-derived). Be specific with player names and DHQ values. Sleeper-ready messages when asked.';
