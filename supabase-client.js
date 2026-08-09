@@ -585,6 +585,82 @@ window.OD.saveDNA = function(leagueId, dnaMap) {
 };
 
 // ══════════════════════════════════════════════════════════════════
+// PLAYER VALUE SNAPSHOTS — point-in-time DHQ value, frozen at draft/trade/
+// periodic capture. Shared league data (open read), narrow write (as
+// yourself). See supabase/migrations/20260809000000_player_value_snapshots.sql.
+// ══════════════════════════════════════════════════════════════════
+
+// Fire-and-forget, like saveDNA — callers are on hot paths (a pick, a trade
+// refresh) and must not block on the network. First write for a given
+// (league, player, season, week, source) wins; later callers no-op.
+window.OD.recordValueSnapshot = function({ leagueId, playerId, season, week, ts, value, valueType, source, context }) {
+    if (!isConfigured() || !hasOwnerIdentity()) return;
+    const db = getClient();
+    if (!db || leagueId == null || playerId == null || value == null) return;
+    const owner = getOwnerIdentity();
+    ensureUser(owner.username).then(() => {
+        db.from('player_value_snapshots').upsert(
+            {
+                league_id: String(leagueId),
+                player_id: String(playerId),
+                season: Number(season),
+                week: Number(week),
+                ts: ts || new Date().toISOString(),
+                value: Number(value),
+                value_type: valueType,
+                source,
+                context: context || {},
+                ...ownerCols(owner),
+            },
+            { onConflict: 'league_id,player_id,season,week,source', ignoreDuplicates: true }
+        );
+    }).catch(console.warn);
+};
+
+// Batch variant for periodic per-league capture (one round-trip for a whole roster).
+window.OD.recordValueSnapshots = function(rows) {
+    if (!isConfigured() || !hasOwnerIdentity() || !Array.isArray(rows) || !rows.length) return;
+    const db = getClient();
+    if (!db) return;
+    const owner = getOwnerIdentity();
+    const payload = rows
+        .filter(r => r && r.leagueId != null && r.playerId != null && r.value != null)
+        .map(r => ({
+            league_id: String(r.leagueId),
+            player_id: String(r.playerId),
+            season: Number(r.season),
+            week: Number(r.week),
+            ts: r.ts || new Date().toISOString(),
+            value: Number(r.value),
+            value_type: r.valueType,
+            source: r.source,
+            context: r.context || {},
+            ...ownerCols(owner),
+        }));
+    if (!payload.length) return;
+    ensureUser(owner.username).then(() => {
+        db.from('player_value_snapshots').upsert(
+            payload,
+            { onConflict: 'league_id,player_id,season,week,source', ignoreDuplicates: true }
+        );
+    }).catch(console.warn);
+};
+
+// Read back a player's (or a whole league's) value history, oldest first.
+window.OD.loadValueSnapshots = async function({ leagueId, playerId }) {
+    if (!isConfigured()) return [];
+    const db = getClient();
+    if (!db || leagueId == null) return [];
+    let q = db.from('player_value_snapshots')
+        .select('player_id,season,week,ts,value,value_type,source,context')
+        .eq('league_id', String(leagueId));
+    if (playerId != null) q = q.eq('player_id', String(playerId));
+    const { data, error } = await q.order('season', { ascending: true }).order('week', { ascending: true });
+    if (error) { console.warn(error); return []; }
+    return data || [];
+};
+
+// ══════════════════════════════════════════════════════════════════
 // STATUS + HELPERS
 // ══════════════════════════════════════════════════════════════════
 

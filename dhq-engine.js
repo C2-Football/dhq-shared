@@ -715,6 +715,13 @@ async function loadLeagueIntel(){
     const platform=S.platform||'sleeper';
     const provider=window.DhqProviders?window.DhqProviders.getProvider(platform):null;
 
+    // Trades have no provider-issued id — identity is derived from the shape
+    // of the transaction itself. Used to (a) tell a genuinely-new trade apart
+    // from one already cached, so its value can be frozen exactly once, and
+    // (b) key a per-trade value-snapshot lookup when grading trade history.
+    const tradeKey=t=>`${t.season}|${t.week}|${(t.roster_ids||[]).slice().sort().join(',')}|${t.ts}`;
+    const newTradeKeys=new Set(); // trades first discovered on THIS load — snapshot their value once, below
+
     let chain, allDraftPicks, draftMeta, seasonStatsRaw, faabTxns, tradeTxns, bracketData, leagueUsersHistory;
     const curSeason = parseInt(S.season) || new Date().getFullYear();
     const uniqueYears = Array.from({length:5}, (_,i) => curSeason - 4 + i);
@@ -735,6 +742,8 @@ async function loadLeagueIntel(){
         if(curChain){
           try{
             const freshTrades=await provider.refreshTrades(curChain);
+            const previouslyKnownKeys=new Set(tradeTxns.map(tradeKey));
+            freshTrades.forEach(t=>{ if(!previouslyKnownKeys.has(tradeKey(t))) newTradeKeys.add(tradeKey(t)); });
             tradeTxns=[...tradeTxns.filter(t=>parseInt(t.season)<curSeason),...freshTrades];
             DhqStorage.set(HIST_KEY,{...histCache,tradeTxns,ts:Date.now()});
             console.log(`[DHQ] Fast-path trade refresh (${platform}): ${freshTrades.length} current-season trades`);
@@ -818,6 +827,10 @@ async function loadLeagueIntel(){
 
         await Promise.all(fetchPromises);
       }
+
+      // First-ever load — every discovered trade is "new" (nothing cached to
+      // diff against), so all of them get their value frozen below.
+      tradeTxns.forEach(t=>newTradeKeys.add(tradeKey(t)));
 
       // Cache historical data
       DhqStorage.set(HIST_KEY,{chain,draftPicks:allDraftPicks,draftMeta,faabTxns,tradeTxns,bracketData,leagueUsersHistory,ts:Date.now()});
@@ -1692,12 +1705,37 @@ async function loadLeagueIntel(){
       return PICK_VALUE_FALLBACK[round]||400;
     };
 
+    // Trade grading reads a FROZEN value per (trade, player) when one exists,
+    // instead of always re-pricing against today's playerScores — otherwise a
+    // trade from last season silently gets graded at this season's market
+    // every time the league reloads. Snapshots for trades first seen on THIS
+    // load (newTradeKeys) don't exist yet, but their frozen value equals
+    // today's playerScores by construction (we're about to write it below),
+    // so the live fallback is exact for them and genuinely-historical for
+    // anything with no snapshot at all (trades that happened before this
+    // feature shipped).
+    let tradeValueSnapshots={};
+    if(typeof window.OD?.loadValueSnapshots==='function'){
+      try{
+        const rows=await window.OD.loadValueSnapshots({leagueId:S.currentLeagueId});
+        (rows||[]).filter(r=>r.source==='trade').forEach(r=>{
+          const key=`${r.context?.trade_key}|${r.player_id}`;
+          tradeValueSnapshots[key]=r.value;
+        });
+      }catch(e){console.warn('[DHQ] trade value snapshot load failed:',e?.message||e);}
+    }
+    const frozenOrLivePlayerVal=(tk,pid)=>{
+      const snapKey=`${tk}|${pid}`;
+      return tradeValueSnapshots[snapKey]!=null?tradeValueSnapshots[snapKey]:(playerScores[pid]||0);
+    };
+
     const tradeHistory=(tradeTxns||[]).map(t=>{
       const rids=t.roster_ids||[];
+      const tk=tradeKey(t);
       const sides={};
       rids.forEach(rid=>{
         const s=t.sides[rid]||{players:[],picks:[]};
-        const playerVal=s.players.reduce((sum,pid)=>sum+(playerScores[pid]||0),0);
+        const playerVal=s.players.reduce((sum,pid)=>sum+frozenOrLivePlayerVal(tk,pid),0);
         const pickVal=s.picks.reduce((sum,pk)=>sum+getPickVal(pk.season,pk.round),0);
         sides[rid]={players:s.players,picks:s.picks,totalValue:playerVal+pickVal};
       });
@@ -1714,6 +1752,30 @@ async function loadLeagueIntel(){
         fairness,winner,valueDiff:diff,valueDiffPct:diffPct
       };
     });
+
+    // Freeze today's value for every player in a newly-discovered trade —
+    // fire-and-forget (mirrors saveDNA), never blocks the league load. Later
+    // loads of this same trade will read these back via loadValueSnapshots
+    // above instead of re-pricing against a future market.
+    if(newTradeKeys.size&&typeof window.OD?.recordValueSnapshot==='function'){
+      const curWeek=Number(S.nflState?.display_week||S.nflState?.week||0);
+      (tradeTxns||[]).forEach(t=>{
+        const tk=tradeKey(t);
+        if(!newTradeKeys.has(tk))return;
+        (t.roster_ids||[]).forEach(rid=>{
+          (t.sides?.[rid]?.players||[]).forEach(pid=>{
+            const value=playerScores[pid];
+            if(value==null)return;
+            window.OD.recordValueSnapshot({
+              leagueId:S.currentLeagueId,playerId:pid,
+              season:Number(t.season)||curSeason,week:Number(t.week)||curWeek,
+              ts:t.ts?new Date(t.ts).toISOString():undefined,
+              value,valueType:'dynasty',source:'trade',context:{trade_key:tk},
+            });
+          });
+        });
+      });
+    }
 
     // Enrich ownerProfiles with value-based trade metrics
     Object.values(ownerProfiles).forEach(p=>{
