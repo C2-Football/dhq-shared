@@ -413,6 +413,21 @@
         return R.useMemo(() => effects(leagueId), [leagueId, tick]);
     }
 
+    // recommendMode — the on-paper-right preset for a roster, derived from its
+    // team assessment (tier + health score). Advisory only, never auto-applies.
+    // SINGLE implementation: the Strategy Editor's "★ Recommended for your
+    // roster" chip and Analytics' "Suggested Mode" (when no strategy is saved)
+    // both call this, so the two surfaces can never suggest different modes
+    // for the same roster (they used to run independent inferences and drift).
+    function recommendMode(assessment) {
+        if (!assessment) return null;
+        const tier = String(assessment.tier || '').toLowerCase();
+        const health = Number(assessment.healthScore) || 0;
+        if (tier.includes('rebuild') || (health && health < 70)) return 'rebuild';
+        if (tier.includes('elite') || tier.includes('contend') || health >= 82) return 'win_now';
+        return 'compete';
+    }
+
     window.WR = window.WR || {};
     window.WR.GmMode = {
         PRESETS,
@@ -428,6 +443,7 @@
         useGmEffects,
         promptData,
         promptBlock,
+        recommendMode,
         // List of mode ids excluding custom — for the preset picker
         list: () => ['rebuild', 'compete', 'win_now'],
     };
