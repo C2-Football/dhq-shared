@@ -375,16 +375,27 @@
    * personaPick uses for picking (via scoreCandidate) — a team that would
    * reach for a player in a snake draft bids aggressively for them here too.
    *
-   * The perceived-value score is converted to a dollar ceiling by inverting
-   * state.js's expectedDHQforDollars curve (7000 * (spent/budget)^0.6) —
-   * literally the same economics the post-draft grade uses to judge whether
-   * a price was a bargain, so "what I'd pay" and "what counts as a good
-   * price" agree by construction instead of being two invented scales.
+   * The bid ceiling is anchored to ctx.marketValue — a real Value-Based-
+   * Drafting dollar price computed once at auction start (state.js's
+   * buildAuctionMarketValues) from the whole draftable pool's value over
+   * replacement, normalized against every dollar in the league's combined
+   * budgets. That's what keeps prices economically sane across the WHOLE
+   * draft instead of each bid being judged only against one team's own
+   * remaining budget with no awareness of the rest of the board (which let
+   * a single early star eat almost an entire budget). This persona's
+   * excitement about the player (from the same nudge stack personaPick
+   * uses) is applied as a bounded ratio against that anchor, not as an
+   * absolute score-to-budget fraction — so there's no fixed DHQ scale to
+   * mismatch against (DHQ tops out well above any fixed clamp we'd pick).
    *
    * @param {Object} persona
    * @param {Object} nomination — { player, ... } (state.js nomination shape)
    * @param {Object} ctx — { teamRoster, draftTuning, rosterId, liData,
-   *                         round, pickNumber, auctionBudget,
+   *                         round, pickNumber, auctionBudget, marketValue —
+   *                         this player's VBD dollar price (state.js
+   *                         buildAuctionMarketValues), inflation — league-
+   *                         wide spend-vs-value multiplier (state.js
+   *                         auctionInflation, 1 = neutral),
    *                         budgetCeiling — caller-computed safe-bid cap
    *                         (state.js maxSafeBid), currentHighBid }
    * @returns {{ rosterId, amount, ceiling, willingToBid }}
@@ -397,15 +408,31 @@
     var pickNumber = ctx.pickNumber || nomination.overall || 1;
     var scored = scoreCandidate(persona, nomination.player, round, pickNumber, ctx, tuning);
 
-    // scoreCandidate's score starts life as raw DHQ (same 0-10000ish scale
-    // grading uses) and only gets multiplicatively nudged — so it's already
-    // DHQ-scaled; clamp straight into expectedDHQforDollars's 0-7000 domain
-    // rather than re-normalizing against the board (a score at/above 7000
-    // means "I'd spend my whole budget on this player if I had to").
-    var perceivedDhq = Math.max(50, Math.min(7000, scored.score));
     var budget = Math.max(1, Number(ctx.auctionBudget) || 200);
-    var bidCeiling = budget * Math.pow(perceivedDhq / 7000, 1 / 0.6);
-    bidCeiling = Math.max(1, Math.min(budget, Math.round(bidCeiling)));
+    var marketValue = Number(ctx.marketValue) > 0 ? Number(ctx.marketValue) : 1;
+
+    // How much MORE or LESS this persona values the player than a neutral
+    // market participant, driven by the exact same need/DNA/posture nudges
+    // scoreCandidate already applied — a ratio against the player's own raw
+    // DHQ rather than an absolute scale, so it self-normalizes regardless of
+    // where DHQ actually tops out.
+    // Bounded tighter than a single team's raw nudge stack might suggest:
+    // scoreCandidate's nudges (EARLY_OFFENSE_PRIOR, R1Tendency, etc.) are
+    // correlated across MOST personas for the same early "hot" players, not
+    // independent per team — so a wide per-bidder ceiling doesn't just let
+    // one uniquely desperate team pay up, it lets a whole crowd of similarly-
+    // nudged bidders cluster near the ceiling together, dragging the settled
+    // price toward that ceiling for an entire early tier (confirmed live:
+    // first 5 elite RBs all settled at 1.6-1.75x their VBD target before
+    // this band was tightened). marketValue already prices in scarcity via
+    // VBD, so excitement only needs to cover genuine incremental persona
+    // preference on top of that, not a second full premium.
+    var rawDhq = Math.max(1, nomination.player.dhq || nomination.player.val || 1);
+    var excitement = scored.score / rawDhq;
+    excitement = Math.max(0.7, Math.min(1.4, excitement));
+
+    var inflation = Number(ctx.inflation) > 0 ? Number(ctx.inflation) : 1;
+    var bidCeiling = Math.max(1, Math.min(budget, Math.round(marketValue * excitement * inflation)));
 
     // Caller-supplied budget-safety cap (state.js maxSafeBid — keeps $1
     // reserved per other roster slot still needed) always wins if lower.
