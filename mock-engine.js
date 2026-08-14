@@ -6,7 +6,7 @@
 // Scout's League Intelligence enrichment (draft-ui.js).
 //
 // Depends on: (none — pure JS)
-// Exposes:    window.App.MockEngine.{ personaPick, computePredictions }
+// Exposes:    window.App.MockEngine.{ personaPick, personaBid, nominateChoice, computePredictions }
 // ══════════════════════════════════════════════════════════════════
 
 (function () {
@@ -113,20 +113,22 @@
   }
 
   /**
-   * personaPick — pick a player for a CPU team using the 10-layer rule engine.
+   * scoreCandidate — the 10-layer rule engine's per-player scoring, extracted
+   * from personaPick so both draft-a-player (personaPick) and bid-on-a-player
+   * (personaBid, for auction mode) share every nudge with zero duplication.
+   * Pure function of a single candidate — no BPA-floor filtering or best-of
+   * selection here, that stays in personaPick (and doesn't apply to bidding,
+   * where there's only ever one candidate: the nominated player).
    *
    * @param {Object} persona — { draftDna, tradeDna, assessment, posture }
-   * @param {Array}  available — pool of draftable players, each with { pid, name, pos, dhq|val }
-   * @param {number} round — 1-indexed round
-   * @param {number} pickNumber — overall pick number (1-indexed)
-   * @param {Object} ctx — { teamRoster: string[], liData?: { draftOutcomes, hitRateByRound } }
-   * @returns {{ player, confidence, reasoning }|null}
+   * @param {Object} p — a single candidate player { pid, name, pos, dhq|val, ... }
+   * @param {number} round
+   * @param {number} pickNumber
+   * @param {Object} ctx — { teamRoster, rosterId, liData }
+   * @param {Object} tuning — normalizeDraftTuning(ctx) result
+   * @returns {{ score, reasoning }}
    */
-  function personaPick(persona, available, round, pickNumber, ctx) {
-    ctx = ctx || {};
-    if (!available || !available.length) return null;
-    var tuning = normalizeDraftTuning(ctx);
-
+  function scoreCandidate(persona, p, round, pickNumber, ctx, tuning) {
     const teamRoster = ctx.teamRoster || [];
     const dna = persona?.draftDna || {};
     const posPct = dna.posPct || {};
@@ -141,28 +143,179 @@
     const needPositions = needs.map(function (n) { return typeof n === 'string' ? n : (n?.pos || ''); });
     const strengthPositions = strengths.map(function (s) { return typeof s === 'string' ? s : (s?.pos || ''); }).filter(Boolean);
 
-    // BPA floor: never pick below 40% of top-5 DHQ
-    var topDHQ = Math.max.apply(null, available.slice(0, 5).map(function (p) { return p.dhq || p.val || 0; }).concat([1]));
-    var bpaFloor = topDHQ * (0.28 + Math.min(0.20, tuning.classWeight * 0.09));
-
-    var earlyPrior = round <= 2 ? EARLY_OFFENSE_PRIOR : null;
-    var variance = variancePct(persona) * (0.65 + (tuning.variancePct / 100) * 1.1);
+    const earlyPrior = round <= 2 ? EARLY_OFFENSE_PRIOR : null;
+    const variance = variancePct(persona) * (0.65 + (tuning.variancePct / 100) * 1.1);
 
     // League Intelligence enrichment (optional — Scout passes LI data)
-    var liData = ctx.liData || {};
-    var rosterId = ctx.rosterId || null;
-    var draftOutcomes = liData.draftOutcomes || [];
+    const liData = ctx.liData || {};
+    const rosterId = ctx.rosterId || null;
+    const draftOutcomes = liData.draftOutcomes || [];
     var roundPosByFreq = {};
     if (rosterId && draftOutcomes.length) {
       draftOutcomes.filter(function (d) {
         return (d.roster_id === rosterId || d.rosterId === rosterId) && d.round === round;
       }).forEach(function (d) {
-        var p = d.pos || d.position || '';
-        if (p) roundPosByFreq[p] = (roundPosByFreq[p] || 0) + 1;
+        var pos = d.pos || d.position || '';
+        if (pos) roundPosByFreq[pos] = (roundPosByFreq[pos] || 0) + 1;
       });
     }
-    var roundHitRates = liData.hitRateByRound?.[round] || {};
-    var leagueBestPos = (roundHitRates.bestPos || []).slice(0, 2).map(function (p) { return p.pos; });
+    const roundHitRates = liData.hitRateByRound?.[round] || {};
+    const leagueBestPos = (roundHitRates.bestPos || []).slice(0, 2).map(function (x) { return x.pos; });
+
+    var val = p.dhq || p.val || 0;
+    var score = val;
+    var reasoning = {
+      primary: 'DHQ',
+      baseVal: val,
+      nudges: [],
+      reach: false,
+      bpaFloorTriggered: false,
+    };
+
+    var classMult = classCropMultiplier(p, pickNumber, round, tuning);
+    if (classMult !== 1.0) {
+      score *= classMult;
+      reasoning.nudges.push({ name: 'ClassCrop', pct: Math.round((classMult - 1) * 100), pos: p.pos });
+    }
+
+    var youthMult = youthMultiplier(p, tuning);
+    if (youthMult !== 1.0) {
+      score *= youthMult;
+      reasoning.nudges.push({ name: 'YouthPremium', pct: Math.round((youthMult - 1) * 100), pos: p.pos });
+    }
+
+    // 1. Early-round position prior
+    if (earlyPrior && earlyPrior[p.pos] != null) {
+      var pr = earlyPrior[p.pos];
+      if (pr !== 1.0) {
+        score *= pr;
+        reasoning.nudges.push({ name: 'EarlyRoundPrior', pct: Math.round((pr - 1) * 100), pos: p.pos });
+      }
+    }
+
+    // 2. Roster need signals
+    var needIdx = needPositions.indexOf(p.pos);
+    if (needIdx === 0) {
+      var primaryNeedMult = weightedMultiplier(1.25, tuning.needWeight);
+      score *= primaryNeedMult;
+      reasoning.nudges.push({ name: 'PrimaryNeed', pct: Math.round((primaryNeedMult - 1) * 100), pos: p.pos });
+      reasoning.primary = 'Primary need';
+    } else if (needIdx > 0) {
+      var secondaryNeedMult = weightedMultiplier(1.10, tuning.needWeight);
+      score *= secondaryNeedMult;
+      reasoning.nudges.push({ name: 'SecondaryNeed', pct: Math.round((secondaryNeedMult - 1) * 100), pos: p.pos });
+    }
+    if (healthScore < 55 && needIdx >= 0) {
+      var healthNeedMult = weightedMultiplier(1.15, tuning.needWeight);
+      score *= healthNeedMult;
+      reasoning.nudges.push({ name: 'DesperateHealth', pct: Math.round((healthNeedMult - 1) * 100) });
+    }
+    if (strengthPositions.includes(p.pos) && persona.posture?.key !== 'SELLER') {
+      score *= 0.85;
+      reasoning.nudges.push({ name: 'StrengthPenalty', pct: -15, pos: p.pos });
+    }
+
+    // 3. Draft History DNA — position pref
+    var prefPct = posPct[p.pos] || 0;
+    if (prefPct > 0) {
+      var dMult = weightedMultiplier(1 + (prefPct / 200), tuning.ownerWeight);
+      score *= dMult;
+      if (prefPct >= 20) reasoning.nudges.push({ name: 'DraftHistoryPref', pct: Math.round((dMult - 1) * 100), pos: p.pos });
+    }
+
+    // 4. R1 tendency
+    if (round <= 2 && r1Positions.includes(p.pos)) {
+      var r1Count = r1Positions.filter(function (x) { return x === p.pos; }).length;
+      var r1Mult = weightedMultiplier(1 + (r1Count * 0.08), tuning.ownerWeight);
+      score *= r1Mult;
+      reasoning.nudges.push({ name: 'R1Tendency', pct: Math.round((r1Mult - 1) * 100), pos: p.pos });
+    }
+
+    // 5. Label nudges
+    if (label === 'DEF-Early' && round <= 3 && ['DL', 'LB', 'DB'].indexOf(p.pos) >= 0) {
+      var defMult = weightedMultiplier(1.12, tuning.ownerWeight);
+      score *= defMult;
+      reasoning.nudges.push({ name: 'DEF-Early', pct: Math.round((defMult - 1) * 100) });
+    }
+    if (label === 'QB-Hunter' && p.pos === 'QB' && round <= 2) {
+      var qbHunterMult = weightedMultiplier(1.15, tuning.ownerWeight);
+      score *= qbHunterMult;
+      reasoning.nudges.push({ name: 'QB-Hunter', pct: Math.round((qbHunterMult - 1) * 100) });
+    }
+    if (label === 'QB-Avoider' && p.pos === 'QB' && round <= 3) {
+      var qbAvoiderMult = weightedMultiplier(0.80, tuning.ownerWeight);
+      score *= qbAvoiderMult;
+      reasoning.nudges.push({ name: 'QB-Avoider', pct: Math.round((qbAvoiderMult - 1) * 100) });
+    }
+    if (label === 'TE-Premium' && p.pos === 'TE' && round <= 3) {
+      var teMult = weightedMultiplier(1.10, tuning.ownerWeight);
+      score *= teMult;
+      reasoning.nudges.push({ name: 'TE-Premium', pct: Math.round((teMult - 1) * 100) });
+    }
+
+    // 6. Trade DNA nudge
+    var tradeMult = weightedMultiplier(tradeDnaMultiplier(persona, p, round), tuning.ownerWeight);
+    if (tradeMult !== 1.0) {
+      score *= tradeMult;
+      reasoning.nudges.push({ name: 'TradeDNA:' + (persona.tradeDna?.key || ''), pct: Math.round((tradeMult - 1) * 100) });
+    }
+
+    // 7. Posture nudge
+    var postureMult = weightedMultiplier(postureMultiplier(persona, p, round, needIdx), tuning.ownerWeight);
+    if (postureMult !== 1.0) {
+      score *= postureMult;
+      reasoning.nudges.push({ name: 'Posture:' + (persona.posture?.key || ''), pct: Math.round((postureMult - 1) * 100) });
+    }
+
+    // 8. Window alignment
+    var winMult = windowMultiplier(persona);
+    if (winMult !== 1.0) {
+      score *= winMult;
+      reasoning.nudges.push({ name: 'Window:' + (persona.assessment?.window || ''), pct: Math.round((winMult - 1) * 100) });
+    }
+
+    // 9. Roster saturation — progressive penalty for same position
+    var sameCount = teamRoster.filter(function (x) { return x === p.pos; }).length;
+    if (sameCount >= 2) {
+      score *= 0.80;
+      reasoning.nudges.push({ name: 'RosterSaturation', pct: -20, pos: p.pos });
+    } else if (sameCount === 1) {
+      score *= 0.95;
+    }
+
+    // 10a. League Intelligence: per-round position history (from Scout LI)
+    if (roundPosByFreq[p.pos]) {
+      score *= 1 + (roundPosByFreq[p.pos] * 0.05);
+    }
+    // 10b. League-wide hit rates (from Scout LI)
+    if (leagueBestPos[0] === p.pos) score *= 1.05;
+    else if (leagueBestPos[1] === p.pos) score *= 1.02;
+
+    // 11. Variance — small random perturbation
+    var jitter = (1 - variance) + Math.random() * (variance * 2);
+    score *= jitter;
+
+    return { score: score, reasoning: reasoning };
+  }
+
+  /**
+   * personaPick — pick a player for a CPU team using the 10-layer rule engine.
+   *
+   * @param {Object} persona — { draftDna, tradeDna, assessment, posture }
+   * @param {Array}  available — pool of draftable players, each with { pid, name, pos, dhq|val }
+   * @param {number} round — 1-indexed round
+   * @param {number} pickNumber — overall pick number (1-indexed)
+   * @param {Object} ctx — { teamRoster: string[], liData?: { draftOutcomes, hitRateByRound } }
+   * @returns {{ player, confidence, reasoning }|null}
+   */
+  function personaPick(persona, available, round, pickNumber, ctx) {
+    ctx = ctx || {};
+    if (!available || !available.length) return null;
+    var tuning = normalizeDraftTuning(ctx);
+
+    // BPA floor: never pick below ~28-48% of top-5 DHQ
+    var topDHQ = Math.max.apply(null, available.slice(0, 5).map(function (p) { return p.dhq || p.val || 0; }).concat([1]));
+    var bpaFloor = topDHQ * (0.28 + Math.min(0.20, tuning.classWeight * 0.09));
 
     var best = null;
     var bestScore = -Infinity;
@@ -173,143 +326,11 @@
       var val = p.dhq || p.val || 0;
       if (val < bpaFloor && available.length > 5) continue;
 
-      // Base score = raw DHQ
-      var score = val;
-      var reasoning = {
-        primary: 'DHQ',
-        baseVal: val,
-        nudges: [],
-        reach: false,
-        bpaFloorTriggered: false,
-      };
-
-      var classMult = classCropMultiplier(p, pickNumber, round, tuning);
-      if (classMult !== 1.0) {
-        score *= classMult;
-        reasoning.nudges.push({ name: 'ClassCrop', pct: Math.round((classMult - 1) * 100), pos: p.pos });
-      }
-
-      var youthMult = youthMultiplier(p, tuning);
-      if (youthMult !== 1.0) {
-        score *= youthMult;
-        reasoning.nudges.push({ name: 'YouthPremium', pct: Math.round((youthMult - 1) * 100), pos: p.pos });
-      }
-
-      // 1. Early-round position prior
-      if (earlyPrior && earlyPrior[p.pos] != null) {
-        var pr = earlyPrior[p.pos];
-        if (pr !== 1.0) {
-          score *= pr;
-          reasoning.nudges.push({ name: 'EarlyRoundPrior', pct: Math.round((pr - 1) * 100), pos: p.pos });
-        }
-      }
-
-      // 2. Roster need signals
-      var needIdx = needPositions.indexOf(p.pos);
-      if (needIdx === 0) {
-        var primaryNeedMult = weightedMultiplier(1.25, tuning.needWeight);
-        score *= primaryNeedMult;
-        reasoning.nudges.push({ name: 'PrimaryNeed', pct: Math.round((primaryNeedMult - 1) * 100), pos: p.pos });
-        reasoning.primary = 'Primary need';
-      } else if (needIdx > 0) {
-        var secondaryNeedMult = weightedMultiplier(1.10, tuning.needWeight);
-        score *= secondaryNeedMult;
-        reasoning.nudges.push({ name: 'SecondaryNeed', pct: Math.round((secondaryNeedMult - 1) * 100), pos: p.pos });
-      }
-      if (healthScore < 55 && needIdx >= 0) {
-        var healthNeedMult = weightedMultiplier(1.15, tuning.needWeight);
-        score *= healthNeedMult;
-        reasoning.nudges.push({ name: 'DesperateHealth', pct: Math.round((healthNeedMult - 1) * 100) });
-      }
-      if (strengthPositions.includes(p.pos) && persona.posture?.key !== 'SELLER') {
-        score *= 0.85;
-        reasoning.nudges.push({ name: 'StrengthPenalty', pct: -15, pos: p.pos });
-      }
-
-      // 3. Draft History DNA — position pref
-      var prefPct = posPct[p.pos] || 0;
-      if (prefPct > 0) {
-        var dMult = weightedMultiplier(1 + (prefPct / 200), tuning.ownerWeight);
-        score *= dMult;
-        if (prefPct >= 20) reasoning.nudges.push({ name: 'DraftHistoryPref', pct: Math.round((dMult - 1) * 100), pos: p.pos });
-      }
-
-      // 4. R1 tendency
-      if (round <= 2 && r1Positions.includes(p.pos)) {
-        var r1Count = r1Positions.filter(function (x) { return x === p.pos; }).length;
-        var r1Mult = weightedMultiplier(1 + (r1Count * 0.08), tuning.ownerWeight);
-        score *= r1Mult;
-        reasoning.nudges.push({ name: 'R1Tendency', pct: Math.round((r1Mult - 1) * 100), pos: p.pos });
-      }
-
-      // 5. Label nudges
-      if (label === 'DEF-Early' && round <= 3 && ['DL', 'LB', 'DB'].indexOf(p.pos) >= 0) {
-        var defMult = weightedMultiplier(1.12, tuning.ownerWeight);
-        score *= defMult;
-        reasoning.nudges.push({ name: 'DEF-Early', pct: Math.round((defMult - 1) * 100) });
-      }
-      if (label === 'QB-Hunter' && p.pos === 'QB' && round <= 2) {
-        var qbHunterMult = weightedMultiplier(1.15, tuning.ownerWeight);
-        score *= qbHunterMult;
-        reasoning.nudges.push({ name: 'QB-Hunter', pct: Math.round((qbHunterMult - 1) * 100) });
-      }
-      if (label === 'QB-Avoider' && p.pos === 'QB' && round <= 3) {
-        var qbAvoiderMult = weightedMultiplier(0.80, tuning.ownerWeight);
-        score *= qbAvoiderMult;
-        reasoning.nudges.push({ name: 'QB-Avoider', pct: Math.round((qbAvoiderMult - 1) * 100) });
-      }
-      if (label === 'TE-Premium' && p.pos === 'TE' && round <= 3) {
-        var teMult = weightedMultiplier(1.10, tuning.ownerWeight);
-        score *= teMult;
-        reasoning.nudges.push({ name: 'TE-Premium', pct: Math.round((teMult - 1) * 100) });
-      }
-
-      // 6. Trade DNA nudge
-      var tradeMult = weightedMultiplier(tradeDnaMultiplier(persona, p, round), tuning.ownerWeight);
-      if (tradeMult !== 1.0) {
-        score *= tradeMult;
-        reasoning.nudges.push({ name: 'TradeDNA:' + (persona.tradeDna?.key || ''), pct: Math.round((tradeMult - 1) * 100) });
-      }
-
-      // 7. Posture nudge
-      var postureMult = weightedMultiplier(postureMultiplier(persona, p, round, needIdx), tuning.ownerWeight);
-      if (postureMult !== 1.0) {
-        score *= postureMult;
-        reasoning.nudges.push({ name: 'Posture:' + (persona.posture?.key || ''), pct: Math.round((postureMult - 1) * 100) });
-      }
-
-      // 8. Window alignment
-      var winMult = windowMultiplier(persona);
-      if (winMult !== 1.0) {
-        score *= winMult;
-        reasoning.nudges.push({ name: 'Window:' + (persona.assessment?.window || ''), pct: Math.round((winMult - 1) * 100) });
-      }
-
-      // 9. Roster saturation — progressive penalty for same position
-      var sameCount = teamRoster.filter(function (x) { return x === p.pos; }).length;
-      if (sameCount >= 2) {
-        score *= 0.80;
-        reasoning.nudges.push({ name: 'RosterSaturation', pct: -20, pos: p.pos });
-      } else if (sameCount === 1) {
-        score *= 0.95;
-      }
-
-      // 10a. League Intelligence: per-round position history (from Scout LI)
-      if (roundPosByFreq[p.pos]) {
-        score *= 1 + (roundPosByFreq[p.pos] * 0.05);
-      }
-      // 10b. League-wide hit rates (from Scout LI)
-      if (leagueBestPos[0] === p.pos) score *= 1.05;
-      else if (leagueBestPos[1] === p.pos) score *= 1.02;
-
-      // 11. Variance — small random perturbation
-      var jitter = (1 - variance) + Math.random() * (variance * 2);
-      score *= jitter;
-
-      if (score > bestScore) {
-        bestScore = score;
+      var scored = scoreCandidate(persona, p, round, pickNumber, ctx, tuning);
+      if (scored.score > bestScore) {
+        bestScore = scored.score;
         best = p;
-        bestReasoning = reasoning;
+        bestReasoning = scored.reasoning;
       }
     }
 
@@ -335,6 +356,71 @@
       confidence: Math.round(confidence * 100) / 100,
       reasoning: bestReasoning,
     };
+  }
+
+  /**
+   * nominateChoice — what a CPU team nominates on its auction turn. Reuses
+   * personaPick verbatim: "what I'd draft right now" IS "what I'd nominate
+   * right now" (usually your own top need — or, for an experienced trade-DNA
+   * archetype, whatever the scoring naturally surfaces first).
+   */
+  function nominateChoice(persona, available, round, pickNumber, ctx) {
+    var result = personaPick(persona, available, round, pickNumber, ctx);
+    return result ? result.player : null;
+  }
+
+  /**
+   * personaBid — what a CPU team is willing to pay for the CURRENTLY
+   * NOMINATED player, using the exact same persona/need/DNA/posture scoring
+   * personaPick uses for picking (via scoreCandidate) — a team that would
+   * reach for a player in a snake draft bids aggressively for them here too.
+   *
+   * The perceived-value score is converted to a dollar ceiling by inverting
+   * state.js's expectedDHQforDollars curve (7000 * (spent/budget)^0.6) —
+   * literally the same economics the post-draft grade uses to judge whether
+   * a price was a bargain, so "what I'd pay" and "what counts as a good
+   * price" agree by construction instead of being two invented scales.
+   *
+   * @param {Object} persona
+   * @param {Object} nomination — { player, ... } (state.js nomination shape)
+   * @param {Object} ctx — { teamRoster, draftTuning, rosterId, liData,
+   *                         round, pickNumber, auctionBudget,
+   *                         budgetCeiling — caller-computed safe-bid cap
+   *                         (state.js maxSafeBid), currentHighBid }
+   * @returns {{ rosterId, amount, ceiling, willingToBid }}
+   */
+  function personaBid(persona, nomination, ctx) {
+    ctx = ctx || {};
+    if (!nomination || !nomination.player) return null;
+    var tuning = normalizeDraftTuning(ctx);
+    var round = ctx.round || 1;
+    var pickNumber = ctx.pickNumber || nomination.overall || 1;
+    var scored = scoreCandidate(persona, nomination.player, round, pickNumber, ctx, tuning);
+
+    // scoreCandidate's score starts life as raw DHQ (same 0-10000ish scale
+    // grading uses) and only gets multiplicatively nudged — so it's already
+    // DHQ-scaled; clamp straight into expectedDHQforDollars's 0-7000 domain
+    // rather than re-normalizing against the board (a score at/above 7000
+    // means "I'd spend my whole budget on this player if I had to").
+    var perceivedDhq = Math.max(50, Math.min(7000, scored.score));
+    var budget = Math.max(1, Number(ctx.auctionBudget) || 200);
+    var bidCeiling = budget * Math.pow(perceivedDhq / 7000, 1 / 0.6);
+    bidCeiling = Math.max(1, Math.min(budget, Math.round(bidCeiling)));
+
+    // Caller-supplied budget-safety cap (state.js maxSafeBid — keeps $1
+    // reserved per other roster slot still needed) always wins if lower.
+    var safeCeiling = ctx.budgetCeiling != null ? Math.max(0, Math.min(bidCeiling, Number(ctx.budgetCeiling))) : bidCeiling;
+
+    var currentHigh = Math.max(0, Number(ctx.currentHighBid) || 0);
+    if (safeCeiling <= currentHigh) {
+      return { rosterId: ctx.rosterId, amount: 0, ceiling: safeCeiling, willingToBid: false };
+    }
+    // Bid up incrementally toward the ceiling rather than jumping straight
+    // to max — real auction bidders sandbag; this also produces natural
+    // multi-round bidding wars instead of one bid ending every nomination.
+    var step = Math.max(1, Math.round(Math.min(5, safeCeiling * 0.08)));
+    var amount = Math.min(safeCeiling, currentHigh + step);
+    return { rosterId: ctx.rosterId, amount: amount, ceiling: safeCeiling, willingToBid: true };
   }
 
   /**
@@ -409,11 +495,15 @@
   // ── Expose ────────────────────────────────────────────────────
   window.App.MockEngine = {
     personaPick: personaPick,
+    personaBid: personaBid,
+    nominateChoice: nominateChoice,
     computePredictions: computePredictions,
   };
 
   // ── Module global exports (Vite migration) ─────────────────────
   window.personaPick        = personaPick;
+  window.personaBid         = personaBid;
+  window.nominateChoice     = nominateChoice;
   window.computePredictions = computePredictions;
 
 })();
