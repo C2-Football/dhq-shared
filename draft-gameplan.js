@@ -63,6 +63,8 @@
               blurb: sf ? 'In Superflex, QBs are gold — grab two starters early before the run dries up.' : 'Lock an elite QB early for a set-and-forget weekly edge.' },
             { key: 'late_qb', label: 'Late-Round QB', rbWt: 1.05, wrWt: 1.0, qbFrac: 0.82, teFrac: 0.5, rbRatio: 0.5,
               blurb: 'Pour early picks into RB/WR; stream or pair value QBs in the final rounds.' },
+            { key: 'startup_foundation', label: 'Startup Foundation', rbWt: 1.1, wrWt: 1.15, qbFrac: 0.5, teFrac: 0.45, rbRatio: 0.46,
+              blurb: 'No existing roster to lean on — build a genuine starting lineup across every position first (RB/WR roughly even, QB/TE by mid-draft), then chase youth and breakout upside once your lineup is covered.' },
         ];
         // QB-Early/Late-QB are less meaningful with no real QB scarcity; keep all
         // but mark the superflex-relevant one. Late-QB is risky in superflex.
