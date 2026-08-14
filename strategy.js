@@ -26,6 +26,12 @@
     blockList: [],
     aggression: 'medium',
     draftStyle: 'bpa',
+    // Which positions to lean toward when building/ordering a board — distinct
+    // from draftStyle above (pick-CAPITAL philosophy: accumulate/consolidate/
+    // positional_need/bpa). Keys match js/shared/draft-gameplan.js's archetype
+    // list (balanced/rb_heavy/hero_rb/zero_rb/te_prem/qb_early/late_qb/
+    // startup_foundation) — the single source of truth for what the options are.
+    draftArchetype: 'balanced',
     marketPosture: 'hold',
     // LEGACY — parsed but unused (2026-07-08 single-voice ruling). Alex has
     // one canonical voice; alexPersonality is no longer a voice knob anywhere.

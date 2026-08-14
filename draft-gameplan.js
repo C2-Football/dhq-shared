@@ -179,7 +179,28 @@
         };
     }
 
-    const DraftGameplan = { build, deriveRounds, parseSlots, archetypes, normSlot };
+    // Scaled for multiplying straight into player value (same order of
+    // magnitude as context.js's getDraftFormatAdapter positionMultipliers,
+    // ~0.85-1.2) — deliberately NOT the same numbers as rbWt/wrWt/etc. above,
+    // which are tuned for buildSequence's round-by-round desirability scoring,
+    // a different mechanism on a different scale (rb_heavy.rbWt=1.45 would
+    // wildly overshoot if multiplied straight into a player's DHQ/value).
+    const ARCHETYPE_POSITION_MULTIPLIERS = {
+        balanced:            { RB: 1.00, WR: 1.00, TE: 1.00, QB: 1.00 },
+        rb_heavy:            { RB: 1.15, WR: 0.94, TE: 1.00, QB: 1.00 },
+        hero_rb:             { RB: 1.05, WR: 1.06, TE: 1.00, QB: 1.00 },
+        zero_rb:             { RB: 0.88, WR: 1.14, TE: 1.04, QB: 1.00 },
+        te_prem:             { RB: 1.00, WR: 1.00, TE: 1.18, QB: 1.00 },
+        qb_early:            { RB: 1.00, WR: 1.00, TE: 1.00, QB: 1.14 },
+        late_qb:             { RB: 1.04, WR: 1.03, TE: 1.00, QB: 0.88 },
+        startup_foundation:  { RB: 1.05, WR: 1.07, TE: 1.02, QB: 1.00 },
+    };
+    function archetypeMultiplier(key, pos) {
+        const table = ARCHETYPE_POSITION_MULTIPLIERS[key] || ARCHETYPE_POSITION_MULTIPLIERS.balanced;
+        return table[pos] || 1;
+    }
+
+    const DraftGameplan = { build, deriveRounds, parseSlots, archetypes, normSlot, archetypeMultiplier };
     App.DraftGameplan = App.DraftGameplan || DraftGameplan;
     if (typeof module !== 'undefined' && module.exports) module.exports = DraftGameplan;
 })(typeof window !== 'undefined' ? window : globalThis);
