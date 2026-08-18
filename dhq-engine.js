@@ -569,7 +569,14 @@ function _dhqStatusAdjustment({p,pos,age,peakEnd,declineEnd,seasons,curSeason,la
   const yearsSincePlayed=latest?Math.max(0,lastDone-latest.year):99;
   const noTeam=!hasRealTeam;
 
-  if(status.includes('retired')||status.includes('inactive')){
+  // "Inactive" is Sleeper's ROSTER status (off the active 53-man) — NOT the
+  // weekly injury_status. It's also what Sleeper marks a player on IR/PUP/
+  // Suspended, who very much still has real dynasty value (a young,
+  // productive player doesn't become worthless the week he lands on IR).
+  // Only treat "Inactive" as career-over when there's ALSO no real NFL team
+  // to be inactive-with — mirrors every other branch below, which all
+  // condition on noTeam. Retired stays a hard zero regardless of team.
+  if(status.includes('retired')||(status.includes('inactive')&&noTeam)){
     return{mult:0,cap:0,code:'inactive',reason:p?.status==='Retired'?'Retired':'Inactive'};
   }
 
@@ -2082,6 +2089,18 @@ async function loadLeagueIntel(){
 
         // Vet offsets: how many vets rank above #1 rookie at each pos in startups
         const vetOffsets={DL:8,LB:6,DB:8,K:2};
+        // Same draft-capital doctrine as the offense path (dhq-shared/rookie-data.js
+        // computeStartupValue) — IDP was running pure scouting-rank ladder lookup
+        // with no capital awareness at all, so a top-5-overall LB and a flat UDFA
+        // with similar scouting buzz landed in the same ~1,000-1,800 neighborhood.
+        // poolSlot mirrors rookie-data.js's IDP capital cohort exactly (same
+        // constants) so the DHQ engine and the draft board agree on IDP rookies.
+        const IDP_ROUND_POOL_MULT={1:0.3,2:0.6,3:1.0,4:1.4,5:1.9,6:2.5,7:3.2};
+        const IDP_CAPITAL_WEIGHT=0.8; // 80% draft capital / 20% scouting, post-draft
+        const ladderValueAt=(ladder,slot)=>{
+          if(!ladder.length)return 0;
+          return ladder[Math.min(Math.max(0,Math.round(slot)-1),ladder.length-1)]||0;
+        };
         let idpKRookieCount=0;
 
         Object.entries(S.players||{}).forEach(([pid,p])=>{
@@ -2112,32 +2131,63 @@ async function loadLeagueIntel(){
           const consensusRank=prospect?.consensusRank||prospect?.rank||null;
           if(!consensusRank||consensusRank>=999)return;
 
-          // Position rank among rookies at this position
-          const posRank=prospect?.rookiePosRank||Math.ceil(consensusRank/(pos==='K'?8:4));
-          const offset=vetOffsets[pos]||8;
-          const ladder=ladders[pos]||[];
+          const isIDPLadderPos=pos==='DL'||pos==='LB'||pos==='DB';
+          const draftPick=Number(prospect?.draftPick)||0;
+          const draftRound=Number(prospect?.draftRound)||(draftPick?Math.min(7,Math.ceil(draftPick/32)):0);
+          // "Capital TBD = UDFA" doctrine (matches rookie-data.js computeStartupValue):
+          // a real NFL roster entry with years_exp===0 has necessarily already been
+          // through the draft/UDFA signing period, so no recorded round/pick means
+          // undrafted — floor to the capital-aware baseDynastyValue instead of the
+          // scouting ladder, which on deep IDP ladders would hand an undrafted
+          // player a rosterable veteran's score just for having decent buzz.
+          const noCapital=isIDPLadderPos&&!draftRound;
 
           let rookieDHQ;
-          if(ladder.length>=3){
-            const idx=Math.min(posRank+offset-1,ladder.length-1);
-            // Decay deep prospects below the veteran floor instead of pinning
-            // them flat to the worst rostered vet — a consensus-rank-50 LB should
-            // not equal the league's #15 starter.
-            const floorVal=ladder[idx]||ladder[ladder.length-1]||0;
-            const overflow=(posRank+offset-1)-(ladder.length-1);
-            rookieDHQ=overflow>0?Math.round(floorVal*Math.max(0.15,1-overflow*0.08)):floorVal;
+          let discount=null;
+          if(noCapital){
+            rookieDHQ=Math.round(prospect?.dynastyValue||prospect?.baseDynastyValue||0);
           }else{
-            // Sparse ladder fallback: rank-based estimate scaled by position weight
-            const posWeight={DL:0.55,LB:0.45,DB:0.50,K:0.20};
-            const topDHQ=Math.max(...Object.values(playerScores),1);
-            rookieDHQ=Math.round(topDHQ*(posWeight[pos]||0.3)*Math.max(0.05,(120-consensusRank)/120));
+            // Position rank among rookies at this position
+            const posRank=prospect?.rookiePosRank||Math.ceil(consensusRank/(pos==='K'?8:4));
+            const offset=vetOffsets[pos]||8;
+            const ladder=ladders[pos]||[];
+
+            let scoutVal;
+            if(ladder.length>=3){
+              const idx=Math.min(posRank+offset-1,ladder.length-1);
+              // Decay deep prospects below the veteran floor instead of pinning
+              // them flat to the worst rostered vet — a consensus-rank-50 LB should
+              // not equal the league's #15 starter.
+              const floorVal=ladder[idx]||ladder[ladder.length-1]||0;
+              const overflow=(posRank+offset-1)-(ladder.length-1);
+              scoutVal=overflow>0?Math.round(floorVal*Math.max(0.15,1-overflow*0.08)):floorVal;
+            }else{
+              // Sparse ladder fallback: rank-based estimate scaled by position weight
+              const posWeight={DL:0.55,LB:0.45,DB:0.50,K:0.20};
+              const topDHQ=Math.max(...Object.values(playerScores),1);
+              scoutVal=Math.round(topDHQ*(posWeight[pos]||0.3)*Math.max(0.05,(120-consensusRank)/120));
+            }
+
+            if(isIDPLadderPos&&ladder.length>=3){
+              // Draft-capital cohort: where a player taken in THIS round typically
+              // slots on the league's own startable IDP pool, independent of how
+              // favorably (or not) scouts graded him.
+              const starters=starterCounts[pos]||4;
+              const poolSlot=totalTeams*starters*(IDP_ROUND_POOL_MULT[Math.min(7,Math.max(1,draftRound))]||3.2);
+              const capitalVal=ladderValueAt(ladder,poolSlot);
+              rookieDHQ=Math.round(IDP_CAPITAL_WEIGHT*capitalVal+(1-IDP_CAPITAL_WEIGHT)*scoutVal)
+                ||Math.round(prospect?.baseDynastyValue||0);
+            }else{
+              // K (unchanged) or an IDP ladder that's too thin to blend against.
+              rookieDHQ=scoutVal;
+              discount=consensusRank<=5?0.97:consensusRank<=15?0.93:consensusRank<=32?0.90:consensusRank<=64?0.87:0.82;
+              rookieDHQ=Math.round(rookieDHQ*discount);
+            }
           }
 
-          // Unproven discount (same tiers as FC rookies)
-          const discount=consensusRank<=5?0.97:consensusRank<=15?0.93:consensusRank<=32?0.90:consensusRank<=64?0.87:0.82;
-          rookieDHQ=Math.round(rookieDHQ*discount);
-
-          if(rookieDHQ<50)return;
+          // NOT a <50 floor: baseDynastyValue (the UDFA branch) is deliberately
+          // tiny for deep/unproven prospects by design — only reject non-positive.
+          if(!(rookieDHQ>0))return;
           const rookieAge=p.age||21;
           const rookieCurve=_dhqCurveForPos(pos,ageCurveWindows);
           playerScores[pid]=Math.min(10000,rookieDHQ);
@@ -2148,8 +2198,8 @@ async function loadLeagueIntel(){
             peakYrsLeft:Math.max(0,rookieCurve.peak[1]-rookieAge),
             declineEnd:rookieCurve.decline[1],
             starterSeasons:0,recentGP:0,
-            source:'PROSPECT_ROOKIE',consensusRank,
-            unprovenDiscount:discount
+            source:noCapital?'PROSPECT_ROOKIE_UDFA':'PROSPECT_ROOKIE',consensusRank,
+            draftRound:draftRound||null,unprovenDiscount:discount
           };
           idpKRookieCount++;
         });
@@ -2159,6 +2209,64 @@ async function loadLeagueIntel(){
         }
       }
     }catch(e){console.warn('IDP/K rookie step failed:',e);}
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 12b-offense: QB/RB/WR/TE rookies FantasyCalc hasn't priced yet.
+    //   The FC-rookie path above (STEP 12a) only scores a rookie FantasyCalc
+    //   itself has priced (fcData). A rookie FantasyCalc hasn't onboarded yet
+    //   (common for Day-2/3 picks early in a class) got NO playerScores entry
+    //   at all — 0/blank DHQ — while IDP/K rookies already had a fallback
+    //   (STEP 12b) for the exact same "FC doesn't cover this player" gap.
+    //   Falls back to the prospect CSV's own dynastyValue (rookie-data.js
+    //   computeStartupValue/baseDynastyValue — the canonical, already-tuned
+    //   rookie value the draft board itself uses), not a new hand-tuned
+    //   veteran-ladder mapping, since offense capital/scouting weighting is
+    //   already extensively tuned there and shouldn't be re-derived here.
+    // ═══════════════════════════════════════════════════════════════
+    try{
+      let offenseRookieCount=0;
+      Object.entries(S.players||{}).forEach(([pid,p])=>{
+        if(p.years_exp!==0)return;
+        if(playerScores[pid])return;
+        const pos=posMapLocal(p.position||'');
+        if(!['QB','RB','WR','TE'].includes(pos))return;
+        const prospect=typeof window.findProspect==='function'
+          ?window.findProspect(p.full_name||((p.first_name||'')+' '+(p.last_name||'')).trim())
+          :null;
+        if(!prospect)return;
+        // Same identity guard as STEP 12b — a fuzzy alias match must never
+        // seed a value off a different player's consensus.
+        const _fTok=s=>String(s||'').toLowerCase().replace(/[^a-z\s]/g,'').trim().split(/\s+/)[0]||'';
+        const _a=_fTok(p.full_name||p.first_name),_b=_fTok(prospect.name);
+        if(_a.length>2&&_b.length>2&&_a!==_b&&!_a.startsWith(_b)&&!_b.startsWith(_a))return;
+        const val=prospect.dynastyValue||prospect.baseDynastyValue||0;
+        // NOT a <50 floor: baseDynastyValue is deliberately tiny for deep/
+        // unproven prospects by design (rookie-data.js rankToTierBase/
+        // pickToBase bottom out in the single-to-low-double digits) — a
+        // legitimately-drafted Day-3 pick can compute well under 50 (e.g. a
+        // round-7 TE ~38) while a UDFA-with-team can compute right at ~50,
+        // so a 50 cutoff doesn't even separate drafted from undrafted. Only
+        // reject non-positive/NaN — anything else is a real, if small, value.
+        if(!(val>0))return;
+        const rookieAge=p.age||21;
+        const rookieCurve=_dhqCurveForPos(pos,ageCurveWindows);
+        playerScores[pid]=Math.min(10000,Math.round(val));
+        playerMeta[pid]={
+          pos,ppg:0,age:rookieAge,
+          ageFactor:1.0,sitMult:1.0,
+          ageCurvePhase:_dhqAgeCurvePhase(rookieAge,pos,ageCurveWindows),
+          peakYrsLeft:Math.max(0,rookieCurve.peak[1]-rookieAge),
+          declineEnd:rookieCurve.decline[1],
+          starterSeasons:0,recentGP:0,
+          source:'PROSPECT_ROOKIE',consensusRank:prospect.consensusRank||prospect.rank||null,
+        };
+        offenseRookieCount++;
+      });
+      if(offenseRookieCount){
+        rookieCount+=offenseRookieCount;
+        console.log(`Offense rookies (FC-unpriced): ${offenseRookieCount} valued from prospect CSV`);
+      }
+    }catch(e){console.warn('Offense rookie fallback step failed:',e);}
 
     // ═══════════════════════════════════════════════════════════════
     // STEP 12c: Ranking-sanity rail — nudge ONLY the few high-value assets
