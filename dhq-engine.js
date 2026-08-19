@@ -2269,6 +2269,56 @@ async function loadLeagueIntel(){
     }catch(e){console.warn('Offense rookie fallback step failed:',e);}
 
     // ═══════════════════════════════════════════════════════════════
+    // STEP 12b-stale: 2nd-year+ players with ZERO signal anywhere.
+    //   Everything above (stats pipeline, FC blend, STEP 12b, STEP
+    //   12b-offense) only reaches a player through real recorded production,
+    //   a FantasyCalc listing, or a match in THIS YEAR'S incoming-class CSV.
+    //   A player who entered the league in a PRIOR class, never recorded a
+    //   stat line since (buried on a practice squad / inactive all year),
+    //   and isn't FC-priced falls through every one of those — the rookie
+    //   CSV doesn't carry last year's class forward, so there's no capital
+    //   signal left to fall back to at all. Real example: a 2025 UDFA/late
+    //   signee still on a real NFL roster in 2026 with 0 recorded games.
+    //   Rather than leave these at a permanent "—", give them the same kind
+    //   of small, clearly-token floor _dhqStatusAdjustment already uses for
+    //   other no-real-signal cases (long-shot free agents, stale rosters) —
+    //   a deliberately tiny, position-scaled "unproven depth stash" value,
+    //   not a real production-derived number.
+    // ═══════════════════════════════════════════════════════════════
+    try{
+      const STALE_FLOOR={QB:50,RB:35,WR:30,TE:25,K:10,DL:8,LB:8,DB:8};
+      let staleCount=0;
+      Object.entries(S.players||{}).forEach(([pid,p])=>{
+        if(p.years_exp===0)return;              // true rookies: STEP 12b/12b-offense already own this
+        if(playerScores[pid])return;             // already scored by something above
+        const hasRealTeam=p?.team&&p.team!=='null'&&p.team!==null&&p.team!=='FA'&&p.team!=='';
+        if(!hasRealTeam)return;                  // no real NFL team → _dhqStatusAdjustment's existing branches are the honest read, not this floor
+        const status=String(p?.status||'').toLowerCase();
+        if(status.includes('retired'))return;    // career over, not unproven
+        const pos=posMapLocal(p.position||'');
+        const floor=STALE_FLOOR[pos];
+        if(!floor)return;                        // unhandled position (OL/FB/LS/etc.) — leave at "—", not a fantasy-relevant slot anyway
+        const rookieAge=p.age||23;
+        const rookieCurve=_dhqCurveForPos(pos,ageCurveWindows);
+        playerScores[pid]=floor;
+        playerMeta[pid]={
+          pos,ppg:0,age:rookieAge,
+          ageFactor:1.0,sitMult:1.0,
+          ageCurvePhase:_dhqAgeCurvePhase(rookieAge,pos,ageCurveWindows),
+          peakYrsLeft:Math.max(0,rookieCurve.peak[1]-rookieAge),
+          declineEnd:rookieCurve.decline[1],
+          starterSeasons:0,recentGP:0,
+          source:'UNPROVEN_STALE_FLOOR',
+        };
+        staleCount++;
+      });
+      if(staleCount){
+        rookieCount+=staleCount;
+        console.log(`Unproven stale-floor: ${staleCount} 2nd-year+ players with no other signal, valued at position floor`);
+      }
+    }catch(e){console.warn('Stale unproven-floor step failed:',e);}
+
+    // ═══════════════════════════════════════════════════════════════
     // STEP 12c: Ranking-sanity rail — nudge ONLY the few high-value assets
     // whose DHQ rank diverges wildly from the FantasyCalc market rank, toward
     // market, leaving the rest of the board untouched. Validated (rho 0.892→
