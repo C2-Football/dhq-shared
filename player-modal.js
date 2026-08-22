@@ -225,6 +225,131 @@ async function _fwFetchCareerStats(pid, currentYear, yrsExp) {
   return results;
 }
 
+// ── Historical trend sparkline (one stat, across every fetched season) ──
+// rows must be sorted ascending by year. Returns null when there's fewer
+// than 2 real (non-null) data points — a single season isn't a trend, and a
+// fabricated flat line would be worse than showing nothing.
+function _fwSparkline(rowsAsc, key, opts) {
+  opts = opts || {};
+  const pts = rowsAsc.map(r => ({ yr: r.yr, v: r[key] })).filter(p => p.v != null);
+  if (pts.length < 2) return null;
+  const w = 220, h = 40, pad = 4;
+  const vals = pts.map(p => p.v);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = (max - min) || 1;
+  const x = i => pad + (i / (pts.length - 1)) * (w - pad * 2);
+  const y = v => h - pad - ((v - min) / span) * (h - pad * 2);
+  const color = opts.color || _wr.gold;
+  const path = pts.map((p, i) => (i === 0 ? 'M' : 'L') + x(i).toFixed(1) + ',' + y(p.v).toFixed(1)).join(' ');
+  const dots = pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="${i === pts.length - 1 ? 3 : 2}" fill="${i === pts.length - 1 ? color : 'rgba(255,255,255,.35)'}" />`).join('');
+  const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="display:block;overflow:visible"><path d="${path}" fill="none" stroke="${color}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round" />${dots}</svg>`;
+  const first = pts[0].v, last = pts[pts.length - 1].v;
+  const delta = last - first;
+  const pct = first !== 0 ? (delta / Math.abs(first)) * 100 : null;
+  // A move under ~8% across the whole sample reads as noise, not a trend.
+  const dir = (pct == null ? Math.abs(delta) < 0.01 : Math.abs(pct) < 8) ? 'flat' : delta > 0 ? 'up' : 'down';
+  const dirColor = dir === 'up' ? _wr.green : dir === 'down' ? _wr.red : _wr.text3;
+  const dirArrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '—';
+  const fmt = opts.format || (v => (Number.isInteger(v) ? String(v) : v.toFixed(1)));
+  return {
+    svg, dir, dirColor, dirArrow,
+    firstYr: pts[0].yr, lastYr: pts[pts.length - 1].yr,
+    firstVal: fmt(first), lastVal: fmt(last),
+    pctText: pct != null ? (pct > 0 ? '+' : '') + Math.round(pct) + '%' : null,
+    seasons: pts.length,
+  };
+}
+
+// Position → the 2 stats a trend panel defaults to (PPG + the one usage
+// stat that best explains it). The user can swap either panel to any other
+// stat available at that position via the dropdown built in
+// _fwBuildHistoricalTrends — this list is just the sensible starting point,
+// not the ceiling.
+const _fwTrendStats = {
+  QB: [{ k: 'ppg' }, { k: 'cmp_pct' }],
+  RB: [{ k: 'ppg' }, { k: 'rz' }],
+  WR: [{ k: 'ppg' }, { k: 'snap_pct' }],
+  TE: [{ k: 'ppg' }, { k: 'snap_pct' }],
+  K: [{ k: 'ppg' }, { k: 'fg_pct' }],
+  DL: [{ k: 'ppg' }, { k: 'idp_sack' }],
+  LB: [{ k: 'ppg' }, { k: 'idp_tfl' }],
+  DB: [{ k: 'ppg' }, { k: 'idp_pass_def' }],
+};
+
+// Plain-string (no HTML) formatter for a stat's sparkline endpoint labels —
+// separate from the table's fmt() above, which returns colored HTML spans.
+function _fwTrendFmtFor(key) {
+  if (key === 'ppg' || key === 'fpts' || key === 'idp_sack') return v => v.toFixed(1);
+  if (['cmp_pct', 'snap_pct', 'fg_pct'].includes(key)) return v => v.toFixed(1) + '%';
+  if (['pass_yd', 'rush_yd', 'rec_yd'].includes(key)) return v => Math.round(v).toLocaleString();
+  return v => String(Math.round(v));
+}
+
+// Every stat this position's career table already tracks, minus GP (not a
+// trend-worthy number), plus fg_pct for K which the table itself doesn't
+// show as a column but the row data carries.
+function _fwChartableStats(pos, cols) {
+  const extra = pos === 'K' ? [{ k: 'fg_pct', l: 'FG%' }] : [];
+  return [...cols.filter(c => c.k !== 'gp'), ...extra];
+}
+
+// Cache the per-year rows a trend panel was built from, keyed by pid, so the
+// stat-picker dropdown can re-render a single panel on selection without
+// re-fetching or re-parsing anything.
+const _fwTrendCache = {};
+
+function _fwTrendPanelInner(pid, slot, key) {
+  const cache = _fwTrendCache[pid];
+  if (!cache) return '';
+  const spec = cache.chartable.find(c => c.k === key) || cache.chartable[0];
+  const spark = _fwSparkline(cache.rowsAsc, spec.k, { format: _fwTrendFmtFor(spec.k) });
+  const optionsHtml = cache.chartable.map(c => `<option value="${c.k}"${c.k === spec.k ? ' selected' : ''}>${c.l}</option>`).join('');
+  const deltaHtml = spark
+    ? `<span style="font-size:13px;font-weight:700;color:${spark.dirColor}">${spark.dirArrow}${spark.pctText ? ' ' + spark.pctText : ''}</span>`
+    : `<span style="font-size:11px;color:${_wr.text3}">Not enough seasons</span>`;
+  const bodyHtml = spark
+    ? `${spark.svg}<div style="display:flex;justify-content:space-between;margin-top:4px;font-size:12px;color:${_wr.text3}"><span>'${String(spark.firstYr).slice(-2)}: ${spark.firstVal}</span><span>'${String(spark.lastYr).slice(-2)}: ${spark.lastVal}</span></div>`
+    : `<div style="height:40px;display:flex;align-items:center;justify-content:center;font-size:12px;color:${_wr.text3}">No sample on this stat</div>`;
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:6px">
+      <select onchange="window._fwSetTrendStat('${pid}',${slot},this.value)" style="background:transparent;border:1px solid ${_wr.borderDim};color:${_wr.text2};font-size:11px;border-radius:4px;padding:2px 4px;text-transform:uppercase;letter-spacing:.04em;max-width:62%">${optionsHtml}</select>
+      ${deltaHtml}
+    </div>
+    ${bodyHtml}`;
+}
+
+// Global re-render hook for the trend-panel stat picker (vanilla onchange —
+// this modal is plain DOM, not React). Swaps ONE panel's chart+labels;
+// leaves the rest of the modal untouched.
+window._fwSetTrendStat = function (pid, slot, key) {
+  const el = document.getElementById('fwpm-trend-panel-' + pid + '-' + slot);
+  if (el) el.innerHTML = _fwTrendPanelInner(pid, slot, key);
+};
+
+// ── Deep historical analytics: multi-season trend panel ──────────
+// Built from the SAME per-year rows _fwBuildCareerTable already parsed — no
+// extra fetch. Renders nothing (returns '') when there's under 2 real
+// seasons of data, rather than a chart that can't show a trend. Each of the
+// 2 panels defaults to a sensible stat (see _fwTrendStats) but is a plain
+// <select> away from any other stat this position tracks.
+function _fwBuildHistoricalTrends(rows, pos, pid, cols) {
+  if (!rows || rows.length < 2) return '';
+  const ascRows = [...rows].sort((a, b) => a.yr - b.yr);
+  const chartable = _fwChartableStats(pos, cols);
+  _fwTrendCache[pid] = { rowsAsc: ascRows, pos, chartable };
+  const defaults = _fwTrendStats[pos] || _fwTrendStats.WR;
+  const slotKeys = [0, 1].map(i => (defaults[i] && chartable.find(c => c.k === defaults[i].k)) ? defaults[i].k : (chartable[i] || chartable[0]).k);
+  const panels = slotKeys.map((key, i) => `
+    <div id="fwpm-trend-panel-${pid}-${i}" style="flex:1;min-width:170px;background:${_wr.panel};border:1px solid ${_wr.borderDim};border-radius:8px;padding:10px 12px">
+      ${_fwTrendPanelInner(pid, i, key)}
+    </div>`).join('');
+  return `
+    <div style="margin-top:14px">
+      <div style="font-size:13px;color:${_wr.text3};text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Historical Trend · ${ascRows.length} seasons</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${panels}</div>
+    </div>`;
+}
+
 // ── Build career stats table ──────────────────────────────────
 function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
   const isIDP = ['DL','LB','DB'].includes(pos);
@@ -236,12 +361,19 @@ function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
   // team-by-year, so it was always displaying the player's CURRENT team for
   // every row (misleading, e.g., Kenneth Walker showing Chiefs for every year).
   // PPG (fpts / gp) is computed per row + totals row in parseRow.
+  // Beyond-PPG columns (cmp%, red zone touches, snap%, TFL) — one per
+  // position group, derived from raw fields already in the Sleeper season
+  // payload (off_snp/tm_off_snp, rush_rz_att/rec_rz_tgt, idp_tkl_loss) but
+  // never read before. See js/shared/stat-catalog.js for the same fields
+  // surfaced in Free Agency + Analytics Custom Reports; kept independent
+  // here (raw string-template `g()` alias pattern) since dhq-shared has no
+  // dependency on warroom-local modules.
   let cols = [];
-  if (isQB) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'pass_cmp',l:'CMP'},{k:'pass_att',l:'ATT'},{k:'pass_yd',l:'YDS'},{k:'pass_td',l:'TD'},{k:'pass_int',l:'INT'},{k:'rush_yd',l:'RUSH'},{k:'fpts',l:'FPTS'}];
-  else if (isRB) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'rush_att',l:'ATT'},{k:'rush_yd',l:'YDS'},{k:'rush_td',l:'TD'},{k:'rec',l:'REC'},{k:'rec_yd',l:'REC YD'},{k:'rec_tgt',l:'TGT'},{k:'fpts',l:'FPTS'}];
-  else if (['WR','TE'].includes(pos)) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'rec_tgt',l:'TGT'},{k:'rec',l:'REC'},{k:'rec_yd',l:'YDS'},{k:'rec_td',l:'TD'},{k:'rush_yd',l:'RUSH'},{k:'fpts',l:'FPTS'}];
+  if (isQB) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'pass_cmp',l:'CMP'},{k:'pass_att',l:'ATT'},{k:'cmp_pct',l:'CMP%'},{k:'pass_yd',l:'YDS'},{k:'pass_td',l:'TD'},{k:'pass_int',l:'INT'},{k:'rush_yd',l:'RUSH'},{k:'fpts',l:'FPTS'}];
+  else if (isRB) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'rush_att',l:'ATT'},{k:'rush_yd',l:'YDS'},{k:'rush_td',l:'TD'},{k:'rec',l:'REC'},{k:'rec_yd',l:'REC YD'},{k:'rec_tgt',l:'TGT'},{k:'rz',l:'RZ'},{k:'fpts',l:'FPTS'}];
+  else if (['WR','TE'].includes(pos)) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'rec_tgt',l:'TGT'},{k:'rec',l:'REC'},{k:'rec_yd',l:'YDS'},{k:'rec_td',l:'TD'},{k:'snap_pct',l:'SNP%'},{k:'rush_yd',l:'RUSH'},{k:'fpts',l:'FPTS'}];
   else if (isK) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'fgm',l:'FGM'},{k:'fga',l:'FGA'},{k:'fgm_50p',l:'50+'},{k:'xpm',l:'XPM'},{k:'xpa',l:'XPA'},{k:'fpts',l:'FPTS'}];
-  else if (isIDP) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'idp_tkl',l:'TKL'},{k:'idp_sack',l:'SACK'},{k:'idp_int',l:'INT'},{k:'idp_pass_def',l:'PD'},{k:'idp_qb_hit',l:'QBH'},{k:'idp_ff',l:'FF'},{k:'fpts',l:'FPTS'}];
+  else if (isIDP) cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'idp_tkl',l:'TKL'},{k:'idp_tfl',l:'TFL'},{k:'idp_sack',l:'SACK'},{k:'idp_int',l:'INT'},{k:'idp_pass_def',l:'PD'},{k:'idp_qb_hit',l:'QBH'},{k:'idp_ff',l:'FF'},{k:'fpts',l:'FPTS'}];
   else cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'fpts',l:'FPTS'}];
 
   const gridCols = `38px ${cols.map(() => '1fr').join(' ')}`;
@@ -256,16 +388,25 @@ function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
     if (gp === 0 && !g('pass_yd') && !g('rush_yd') && !g('rec_yd') && !g('idp_tkl_solo')) return null;
     const fpts = _fwCalcPts(raw, sc);
     const ppg = gp > 0 ? +(fpts / gp).toFixed(1) : 0;
+    const passCmp = g('pass_cmp'), passAtt = g('pass_att');
+    const offSnp = g('off_snp'), tmOffSnp = g('tm_off_snp');
+    const rzTouches = g('rush_rz_att') + g('rec_rz_tgt');
     return {
       yr, gp, fpts: +fpts.toFixed(1), ppg,
-      pass_cmp: g('pass_cmp'), pass_att: g('pass_att'), pass_yd: g('pass_yd'), pass_td: g('pass_td'), pass_int: g('pass_int'),
+      pass_cmp: passCmp, pass_att: passAtt, pass_yd: g('pass_yd'), pass_td: g('pass_td'), pass_int: g('pass_int'),
+      cmp_pct: passAtt > 0 ? +(100 * passCmp / passAtt).toFixed(1) : null,
       rush_att: g('rush_att'), rush_yd: g('rush_yd'), rush_td: g('rush_td'),
       rec: g('rec'), rec_yd: g('rec_yd'), rec_td: g('rec_td'), rec_tgt: g('rec_tgt','targets','tgt'),
+      rz: rzTouches || null,
+      off_snp: offSnp, tm_off_snp: tmOffSnp,
+      snap_pct: tmOffSnp > 0 ? +(100 * offSnp / tmOffSnp).toFixed(1) : null,
       idp_tkl: g('idp_tkl_solo','tkl_solo') + g('idp_tkl_ast','tkl_ast'),
+      idp_tfl: g('idp_tkl_loss','tkl_loss'),
       idp_sack: g('idp_sack','sack'), idp_int: g('idp_int','def_int','int'),
       idp_pass_def: g('idp_pass_def','def_pass_def','pass_defended'),
       idp_qb_hit: g('idp_qb_hit','qb_hit'), idp_ff: g('idp_ff','ff','fumble_forced'),
       fgm: g('fgm','fg_made'), fga: g('fga','fg_att'), fgm_50p: g('fgm_50p','fgm_50_plus','fg_made_50_plus'),
+      fg_pct: g('fga') > 0 ? +(100 * g('fgm') / g('fga')).toFixed(1) : null,
       xpm: g('xpm','xp_made'), xpa: g('xpa','xp_att'),
       // Extra efficiency metrics
       _raw: raw,
@@ -286,21 +427,31 @@ function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
     if (['pass_yd','rush_yd','rec_yd'].includes(k)) return `<strong>${Math.round(v).toLocaleString()}</strong>`;
     if (['idp_sack','idp_int','idp_ff','idp_qb_hit'].includes(k) && v >= 5) return `<span style="color:${_wr.green};font-weight:600">${Number.isInteger(v)?v:v.toFixed(1)}</span>`;
     if (k === 'idp_tkl' && v >= 80) return `<span style="color:${_wr.green};font-weight:600">${Math.round(v)}</span>`;
+    if (k === 'cmp_pct' || k === 'snap_pct') return `${v.toFixed(1)}%`;
     return Number.isInteger(v) ? v : v.toFixed(1);
   };
 
-  // Career totals row
+  // Career totals row. cmp_pct/snap_pct are ratios — summing them across
+  // years would be nonsense, so they're excluded from the generic per-column
+  // sum below and re-derived from the underlying counts (pass_cmp/pass_att,
+  // off_snp/tm_off_snp) summed across every year regardless of which columns
+  // are actually shown for this position.
+  const RATIO_KEYS = ['cmp_pct', 'snap_pct'];
   let totalsRow = '';
   if (rows.length >= 2) {
-    const totals = { yr: 'TOT', gp: 0, fpts: 0, ppg: 0 };
-    cols.forEach(c => { if (!['gp','fpts','ppg'].includes(c.k)) totals[c.k] = 0; });
+    const totals = { yr: 'TOT', gp: 0, fpts: 0, ppg: 0, pass_cmp: 0, pass_att: 0, off_snp: 0, tm_off_snp: 0 };
+    cols.forEach(c => { if (!['gp','fpts','ppg', ...RATIO_KEYS].includes(c.k)) totals[c.k] = 0; });
     rows.forEach(r => {
       totals.gp += r.gp || 0;
       totals.fpts += r.fpts || 0;
-      cols.forEach(c => { if (!['gp','fpts','ppg'].includes(c.k)) totals[c.k] = (totals[c.k]||0) + (r[c.k]||0); });
+      totals.pass_cmp += r.pass_cmp || 0; totals.pass_att += r.pass_att || 0;
+      totals.off_snp += r.off_snp || 0; totals.tm_off_snp += r.tm_off_snp || 0;
+      cols.forEach(c => { if (!['gp','fpts','ppg', ...RATIO_KEYS].includes(c.k)) totals[c.k] = (totals[c.k]||0) + (r[c.k]||0); });
     });
     totals.fpts = +totals.fpts.toFixed(1);
     totals.ppg = totals.gp > 0 ? +(totals.fpts / totals.gp).toFixed(1) : 0;
+    totals.cmp_pct = totals.pass_att > 0 ? +(100 * totals.pass_cmp / totals.pass_att).toFixed(1) : null;
+    totals.snap_pct = totals.tm_off_snp > 0 ? +(100 * totals.off_snp / totals.tm_off_snp).toFixed(1) : null;
     totalsRow = `
       <div class="fwpm-career-row" style="grid-template-columns:${gridCols};border-top:2px solid ${_wr.border};padding-top:6px;font-weight:700">
         <div style="font-size:13px;font-weight:800;color:${_wr.gold}">TOT</div>
@@ -318,7 +469,8 @@ function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
         <div style="font-weight:700;color:${_wr.text3}">${r.yr}</div>
         ${cols.map(c => `<div style="font-weight:600;text-align:right;color:${_wr.text}">${fmt(r[c.k], c.k)}</div>`).join('')}
       </div>`).join('')}
-    ${totalsRow}`;
+    ${totalsRow}
+    ${_fwBuildHistoricalTrends(rows, pos, pid, cols)}`;
 }
 
 // ── Main: open player modal ────────────────────────────────────

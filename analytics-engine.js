@@ -225,6 +225,92 @@ function analyzeDraftPatterns(winners, losers) {
   return { winnerDraftProfile, leagueDraftProfile, winnerHitRate, bestPositionByRound, winnerPosHitRate };
 }
 
+// Draft-slot tier for a pick: Early/Mid/Late third of that specific draft's
+// team count (draft_slot and teams both ride on the pick from
+// dhq-providers.js getDraftPicks — Sleeper's own draft_slot field, not
+// derived/guessed). Tiers, not exact slots (1-12), because a league's
+// history is only a handful of real drafts — splitting round × exact slot
+// would leave almost every cell with 0-1 samples. Returns null (not a
+// guess) when a pick doesn't carry both fields, e.g. MFL history, which
+// doesn't expose a per-pick draft_slot the same way.
+function draftSlotTier(pick) {
+  const slot = pick.draft_slot, teams = pick.teams;
+  if (!slot || !teams || teams < 3) return null;
+  const third = teams / 3;
+  if (slot <= third) return 'early';
+  if (slot <= third * 2) return 'mid';
+  return 'late';
+}
+
+// ── Section 2b: Ideal Draft Strategy, split by draft-slot tier ───
+// Same "what did champion-tier teams draft, and did it hit" question as
+// analyzeDraftPatterns, but answered separately for teams picking from the
+// early/mid/late third of the draft order — "what should the 1.02 holder
+// draft in R2" is a different question from "what should the 1.11 holder
+// draft in R2", and bundling them together (the original panel) erases
+// that. Redraft/best-ball/chopped only in practice: a full field redrafts
+// every year, so slot is a real, repeated, comparable position across
+// seasons — a dynasty startup happens once, and rookie drafts are ordered
+// by standings, not a strategic choice, so "which slot are you drafting
+// from" isn't a recurring, generalizable question there the way it is in a
+// seasonal format. (Caller is expected to gate on league format; this
+// function itself doesn't know or care what format it's being asked about.)
+function analyzeDraftPatternsBySlotTier(winners) {
+  const LI = window.App?.LI || (typeof window.LI !== 'undefined' ? window.LI : {});
+  const draftOutcomes = LI.draftOutcomes || [];
+  const winnerSet = winners instanceof Set ? winners : new Set(winners);
+  const TIERS = ['early', 'mid', 'late'];
+  const result = { early: {}, mid: {}, late: {}, hasSlotData: false };
+  if (!draftOutcomes.length) return result;
+
+  const tiered = draftOutcomes.map(d => ({ ...d, tier: draftSlotTier(d) })).filter(d => d.tier);
+  result.hasSlotData = tiered.length > 0;
+  if (!tiered.length) return result;
+
+  const maxRound = tiered.reduce((m, d) => Math.max(m, d.round || 0), 0);
+
+  TIERS.forEach(tier => {
+    const tierPicks = tiered.filter(d => d.tier === tier);
+    for (let rd = 1; rd <= maxRound; rd++) {
+      const rdPicks = tierPicks.filter(d => d.round === rd);
+      if (!rdPicks.length) continue;
+      const winnerPicks = rdPicks.filter(d => winnerSet.has(d.roster_id));
+
+      // Same min-2-samples rule as the round-only version, same honest
+      // "fall back to this tier's league-wide read, never to a different
+      // tier or a made-up number" — and if even the tier's league-wide read
+      // is too thin, the round just doesn't appear for that tier rather
+      // than showing a number nobody should trust.
+      const posCounts = {};
+      winnerPicks.forEach(d => { posCounts[d.pos] = (posCounts[d.pos] || 0) + 1; });
+      let ranked = Object.entries(posCounts)
+        .filter(([, cnt]) => cnt >= 2)
+        .map(([pos, cnt]) => {
+          const hits = winnerPicks.filter(d => d.pos === pos && (d.isStarter || d.isHit)).length;
+          return { pos, rate: Math.round((hits / cnt) * 100), total: cnt, starters: hits };
+        })
+        .sort((a, b) => b.rate - a.rate);
+      let source = 'winners';
+      if (!ranked.length) {
+        source = 'tier';
+        const leaguePosCounts = {};
+        rdPicks.forEach(d => { leaguePosCounts[d.pos] = (leaguePosCounts[d.pos] || 0) + 1; });
+        ranked = Object.entries(leaguePosCounts)
+          .filter(([, cnt]) => cnt >= 2)
+          .map(([pos, cnt]) => {
+            const hits = rdPicks.filter(d => d.pos === pos && (d.isStarter || d.isHit)).length;
+            return { pos, rate: Math.round((hits / cnt) * 100), total: cnt, starters: hits };
+          })
+          .sort((a, b) => b.rate - a.rate);
+      }
+      if (!ranked.length) continue; // too thin even league-wide — leave the round out, not a guess
+      result[tier][rd] = { source, ranked, total: winnerPicks.length, samplePicks: rdPicks.length };
+    }
+  });
+
+  return result;
+}
+
 // ── Section 3: Waiver Intelligence ───────────────────────────────
 
 function analyzeWaiverPatterns(winners, losers) {
@@ -799,6 +885,7 @@ function runLeagueAnalytics() {
     const { winners, losers, winnerSeasons } = winnerResult;
     const winnerSource = winnerResult.source || 'standings';
     const draft = analyzeDraftPatterns(winners, losers);
+    const draftBySlot = analyzeDraftPatternsBySlotTier(winners);
     const waivers = analyzeWaiverPatterns(winners, losers);
     const roster = analyzeRosterConstruction(winners, losers, S.rosters);
     const trades = analyzeTradePatterns(winners, losers);
@@ -813,6 +900,7 @@ function runLeagueAnalytics() {
       winnerSource,
       winnerCount: winners.size,
       draft,
+      draftBySlot,
       waivers,
       roster,
       trades,
@@ -1184,6 +1272,7 @@ Object.assign(window.App, {
   runLeagueAnalytics,
   identifyWinners,
   analyzeDraftPatterns,
+  analyzeDraftPatternsBySlotTier,
   analyzeWaiverPatterns,
   analyzeRosterConstruction,
   analyzeTradePatterns,
@@ -1200,6 +1289,7 @@ Object.assign(window, { runLeagueAnalytics, detectRivalries, buildOwnerHistory, 
 // ── Module global exports (Vite migration) ───────────────────────────────────
 window.identifyWinners = identifyWinners;
 window.analyzeDraftPatterns = analyzeDraftPatterns;
+window.analyzeDraftPatternsBySlotTier = analyzeDraftPatternsBySlotTier;
 window.analyzeWaiverPatterns = analyzeWaiverPatterns;
 window.analyzeRosterConstruction = analyzeRosterConstruction;
 window.analyzeTradePatterns = analyzeTradePatterns;

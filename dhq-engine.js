@@ -733,6 +733,11 @@ async function loadLeagueIntel(){
     const curSeason = parseInt(S.season) || new Date().getFullYear();
     const uniqueYears = Array.from({length:5}, (_,i) => curSeason - 4 + i);
 
+    // DIAGNOSTIC (temporary — remove once the empty-draftOutcomes cause is confirmed):
+    // the FAST/COLD path choice and cache contents were unlogged, so a permanently-thin
+    // cache (e.g. draftPicks always []) silently re-runs COLD every load with no signal.
+    console.log(`[DHQ] loadLeagueIntel(${platform}): histCache=${histCache ? `chain(${histCache.chain?.length||0}) draftPicks(${histCache.draftPicks?.length||0})` : 'none'}`);
+
     if(histCache&&histCache.chain?.length>=1&&histCache.draftPicks?.length>0){
       // ── FAST PATH: Use permanent cache for historical data ──
       chain=histCache.chain;
@@ -778,6 +783,7 @@ async function loadLeagueIntel(){
         // Step 1: League chain
         chain=await provider.getLeagueChain(S.currentLeagueId,curSeason);
         if(!chain.length)chain=[{id:S.currentLeagueId,season:String(curSeason)}];
+        console.log(`[DHQ] league chain (${platform}): ${chain.length} season(s) -> ${chain.map(c=>c.season).join(', ')}`);
 
         // Step 2: All parallel — drafts + stats + transactions + brackets + users
         allDraftPicks=[];
@@ -996,6 +1002,10 @@ async function loadLeagueIntel(){
       if(!pickSlotHistory[dp.pick_no])pickSlotHistory[dp.pick_no]=[];
       pickSlotHistory[dp.pick_no].push({pos,name:dp.name,hit:isHit,starter:isStarter,season:dp.season,bestTotal});
     });
+
+    // DIAGNOSTIC (temporary — remove once the empty-draftOutcomes cause is confirmed):
+    // this is the number analytics.js's hasDraftOutcomeHistory ultimately gates on.
+    console.log(`[DHQ] draft outcomes (${platform}): allDraftPicks(${allDraftPicks.length}) -> draftOutcomes(${draftOutcomes.length}), hitByRoundPos keys(${Object.keys(hitByRoundPos).length})`);
 
     // ═══════════════════════════════════════════════════════════════
     // STEP 7: DHQ_PICK_VALUE — value of every draft slot (1-112+)

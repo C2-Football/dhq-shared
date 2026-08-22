@@ -54,22 +54,45 @@ const SleeperProvider = {
     const posMapLocal = p => { if (['DE','DT'].includes(p)) return 'DL'; if (['CB','S'].includes(p)) return 'DB'; return p; };
     const drafts = await fetch(`${SLEEPER_BASE}/league/${chainEntry.id}/drafts`).then(r => r.json()).catch(() => []);
     const completed = (drafts || []).filter(d => d.draft_id && d.status === 'complete');
+    // DIAGNOSTIC (temporary — remove once the empty-draftOutcomes cause is confirmed
+    // for the affected league): getDraftPicks silently returned [] for a whole draft
+    // on two heuristics (>=20 rounds, >50% veteran picks) with zero visibility into
+    // when/why that fired, or into drafts found-but-not-'complete'. Log both here.
+    console.log(`[DHQ] getDraftPicks ${chainEntry.season} (league ${chainEntry.id}): ${(drafts || []).length} draft(s) found, ${completed.length} complete` + ((drafts || []).length && !completed.length ? ` — statuses: ${(drafts || []).map(d => d.status).join(',')}` : ''));
     // Fetch every completed draft's picks concurrently — was awaited one draft
     // at a time, serializing the round-trips on the DHQ cold path. Each draft is
     // independent; flatten in chain order, so output is unchanged.
     const perDraft = await Promise.all(completed.map(async d => {
       const dpicks = await fetch(`${SLEEPER_BASE}/draft/${d.draft_id}/picks`).then(r => r.ok ? r.json() : []).catch(() => []);
       const rounds = d.settings?.rounds || dpicks.reduce((m, p) => Math.max(m, p.round), 0);
-      if (rounds >= 20) return []; // startup draft
+      if (rounds >= 20) {
+        console.log(`[DHQ] getDraftPicks ${chainEntry.season}: draft ${d.draft_id} EXCLUDED (startup: ${rounds} rounds >= 20), ${dpicks.length} raw picks`);
+        return []; // startup draft
+      }
       const veteranCount = dpicks.filter(p => { const pl = S?.players?.[p.player_id]; return pl && (pl.years_exp || 0) >= 2; }).length;
-      if (veteranCount > dpicks.length * 0.5) return []; // startup
-      return dpicks.filter(p => p.metadata?.position).map(p => ({
+      if (veteranCount > dpicks.length * 0.5) {
+        console.log(`[DHQ] getDraftPicks ${chainEntry.season}: draft ${d.draft_id} EXCLUDED (startup: ${veteranCount}/${dpicks.length} veteran picks > 50%)`);
+        return []; // startup
+      }
+      // Team count for this specific draft — needed to bucket draft_slot into
+      // early/mid/late thirds later (a slot-tier read only makes sense
+      // relative to how many teams were actually in that draft; a league's
+      // team count can itself change across seasons).
+      const teamCount = d.settings?.teams || Math.round(dpicks.length / (rounds || 1)) || 0;
+      const out = dpicks.filter(p => p.metadata?.position).map(p => ({
         season: chainEntry.season, round: p.round, pick_no: p.pick_no,
+        // draft_slot: this team's position in THIS draft's snake order
+        // (1-indexed) — Sleeper's own field, not derived. teamCount rides
+        // alongside so a consumer can bucket it into thirds correctly even
+        // though league size varies season to season.
+        draft_slot: p.draft_slot || null, teams: teamCount,
         roster_id: p.roster_id, pid: p.player_id,
         name: (p.metadata.first_name || '') + ' ' + (p.metadata.last_name || ''),
         pos: posMapLocal(p.metadata.position), rawPos: p.metadata.position,
         team: p.metadata.team,
       }));
+      console.log(`[DHQ] getDraftPicks ${chainEntry.season}: draft ${d.draft_id} INCLUDED, ${rounds} rounds, ${dpicks.length} raw picks -> ${out.length} counted (${dpicks.length - out.length} dropped for missing metadata.position)`);
+      return out;
     }));
     return perDraft.flat();
   },
