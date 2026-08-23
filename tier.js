@@ -286,7 +286,7 @@ function showUpgradePrompt(feature, containerEl) {
       <div style="font-size:14px;color:var(--text3);line-height:1.6;margin-bottom:16px">${desc}</div>
       ${contextNote}
     </div>
-    <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:16px;margin-bottom:20px">
+    <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--card-radius-lg, 14px);padding:16px;margin-bottom:20px">
       <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">War Room — $9.99/mo</div>
       <div style="font-size:13px;color:var(--text3);line-height:1.7">
         Unlimited AI chat &middot; All leagues &middot; Owner DNA<br>
@@ -295,7 +295,7 @@ function showUpgradePrompt(feature, containerEl) {
     </div>
     <button
       onclick="document.getElementById('dhq-upgrade-modal').style.display='none';if(window.showProLaunchPage)showProLaunchPage();"
-      style="width:100%;padding:14px;background:linear-gradient(135deg,#d4af37,#b8941f);color:#1a1000;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;box-shadow:0 4px 16px rgba(212,175,55,.25)">
+      style="width:100%;padding:14px;background:linear-gradient(135deg,#d4af37,#b8941f);color:#1a1000;border:none;border-radius:var(--card-radius-lg, 14px);font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;box-shadow:0 4px 16px rgba(212,175,55,.25)">
       Upgrade to War Room — $9.99/mo
     </button>
     <button
@@ -522,19 +522,19 @@ function initTrialSystem() {
 // Rendered inline where gated content would appear.
 function _tierGatePlaceholder(featureLabel, feature) {
   return `
-    <div style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:8px;min-height:120px">
+    <div style="position:relative;border-radius:var(--card-radius-lg, 14px);overflow:hidden;margin-bottom:8px;min-height:120px">
       <div style="filter:blur(3px);pointer-events:none;user-select:none;opacity:.25;padding:16px;background:var(--bg3);border-radius:12px">
-        <div style="height:14px;background:var(--border);border-radius:4px;margin-bottom:10px;width:60%"></div>
-        <div style="height:12px;background:var(--border);border-radius:4px;margin-bottom:8px;width:90%"></div>
-        <div style="height:12px;background:var(--border);border-radius:4px;margin-bottom:8px;width:75%"></div>
-        <div style="height:12px;background:var(--border);border-radius:4px;width:55%"></div>
+        <div style="height:14px;background:var(--border);border-radius:var(--card-radius-xs, 5px);margin-bottom:10px;width:60%"></div>
+        <div style="height:12px;background:var(--border);border-radius:var(--card-radius-xs, 5px);margin-bottom:8px;width:90%"></div>
+        <div style="height:12px;background:var(--border);border-radius:var(--card-radius-xs, 5px);margin-bottom:8px;width:75%"></div>
+        <div style="height:12px;background:var(--border);border-radius:var(--card-radius-xs, 5px);width:55%"></div>
       </div>
       <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(10,10,15,.55)">
         <div style="font-size:22px">🔒</div>
         <div style="font-size:14px;font-weight:700;color:var(--text)">${featureLabel}</div>
         <button
           onclick="if(window.showProLaunchPage)showProLaunchPage();else showUpgradePrompt('${feature}')"
-          style="padding:8px 20px;background:linear-gradient(135deg,#d4af37,#b8941f);color:#1a1000;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(212,175,55,.3)">
+          style="padding:8px 20px;background:linear-gradient(135deg,#d4af37,#b8941f);color:#1a1000;border:none;border-radius:var(--card-radius, 10px);font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(212,175,55,.3)">
           Unlock with Pro
         </button>
       </div>

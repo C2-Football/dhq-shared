@@ -176,18 +176,18 @@
     style.textContent = `
       .dhq-tutorial-root{position:fixed;inset:0;z-index:100000;pointer-events:none;color:var(--text,#fff);font-family:inherit;overflow:hidden;max-width:100vw}
       .dhq-tutorial-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(5px);pointer-events:auto}
-      .dhq-tutorial-spotlight{position:fixed;border:2px solid var(--dhq-tutorial-accent,#D4AF37);border-radius:12px;box-shadow:0 0 0 2px rgba(212,175,55,.18),0 0 42px rgba(212,175,55,.28);pointer-events:none;transition:all .22s ease}
-      .dhq-tutorial-panel{position:fixed;pointer-events:auto;box-sizing:border-box;width:calc(100vw - 32px);max-width:820px;max-height:calc(100vh - 32px);overflow:hidden;background:linear-gradient(135deg,rgba(9,9,9,.98),rgba(24,24,24,.98));border:1px solid rgba(212,175,55,.46);border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.72),inset 0 1px 0 rgba(255,255,255,.07);display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,240px);gap:16px;padding:18px}
+      .dhq-tutorial-spotlight{position:fixed;border:2px solid var(--dhq-tutorial-accent,#D4AF37);border-radius:var(--card-radius-lg, 14px);box-shadow:0 0 0 2px rgba(212,175,55,.18),0 0 42px rgba(212,175,55,.28);pointer-events:none;transition:all .22s ease}
+      .dhq-tutorial-panel{position:fixed;pointer-events:auto;box-sizing:border-box;width:calc(100vw - 32px);max-width:820px;max-height:calc(100vh - 32px);overflow:hidden;background:linear-gradient(135deg,rgba(9,9,9,.98),rgba(24,24,24,.98));border:1px solid rgba(212,175,55,.46);border-radius:var(--card-radius-lg, 14px);box-shadow:0 24px 70px rgba(0,0,0,.72),inset 0 1px 0 rgba(255,255,255,.07);display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,240px);gap:16px;padding:18px}
       .dhq-tutorial-panel.is-center{left:50%;top:50%;transform:translate(-50%,-50%)}
       .dhq-tutorial-panel.is-anchored{width:calc(100vw - 32px);max-width:660px;grid-template-columns:minmax(0,1fr)}
       .dhq-tutorial-main{min-width:0}
       .dhq-tutorial-alex{display:flex;align-items:center;gap:10px;margin-bottom:13px}
-      .dhq-tutorial-alex-face{width:40px;height:40px;border-radius:9px;flex-shrink:0;object-fit:cover;border:2px solid var(--dhq-tutorial-accent,#D4AF37);background:linear-gradient(135deg,#d4af37,#b8941e);display:flex;align-items:center;justify-content:center;font-weight:900;color:#0a0a0a;font-size:13px;letter-spacing:.02em}
+      .dhq-tutorial-alex-face{width:40px;height:40px;border-radius:var(--card-radius, 10px);flex-shrink:0;object-fit:cover;border:2px solid var(--dhq-tutorial-accent,#D4AF37);background:linear-gradient(135deg,#d4af37,#b8941e);display:flex;align-items:center;justify-content:center;font-weight:900;color:#0a0a0a;font-size:13px;letter-spacing:.02em}
       .dhq-tutorial-alex-id{display:flex;flex-direction:column;line-height:1.1}
       .dhq-tutorial-alex-id b{color:var(--dhq-tutorial-accent,#D4AF37);font-size:14px;font-weight:900;letter-spacing:.02em}
       .dhq-tutorial-alex-id small{color:rgba(255,255,255,.5);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;margin-top:2px}
       .dhq-tutorial-choices{display:flex;flex-direction:column;gap:8px;margin:12px 0 6px}
-      .dhq-tutorial-choice{display:block;width:100%;text-align:left;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.035);border-radius:9px;padding:11px 13px;color:rgba(255,255,255,.82);font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
+      .dhq-tutorial-choice{display:block;width:100%;text-align:left;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.035);border-radius:var(--card-radius, 10px);padding:11px 13px;color:rgba(255,255,255,.82);font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
       .dhq-tutorial-choice:hover{border-color:rgba(212,175,55,.45)}
       .dhq-tutorial-choice.is-active{border-color:var(--dhq-tutorial-accent,#D4AF37);background:rgba(212,175,55,.1)}
       .dhq-tutorial-choice b{display:block;color:#fff;font-size:14px;font-weight:850;margin-bottom:2px}
@@ -197,8 +197,8 @@
       .dhq-tutorial-title{font-size:clamp(22px,3.2vw,32px);line-height:1.02;font-weight:900;color:#fff;letter-spacing:0;margin:0 0 8px}
       .dhq-tutorial-copy{font-size:14px;line-height:1.48;color:rgba(255,255,255,.76);margin:0 0 12px;max-width:58ch}
       .dhq-tutorial-meta{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 13px}
-      .dhq-tutorial-chip{border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.045);border-radius:7px;padding:6px 8px;color:rgba(255,255,255,.72);font-size:12px;font-weight:750}
-      .dhq-tutorial-board{border:1px solid rgba(212,175,55,.18);background:rgba(212,175,55,.055);border-radius:9px;padding:12px;align-self:stretch;min-width:0}
+      .dhq-tutorial-chip{border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.045);border-radius:var(--card-radius-sm, 8px);padding:6px 8px;color:rgba(255,255,255,.72);font-size:12px;font-weight:750}
+      .dhq-tutorial-board{border:1px solid rgba(212,175,55,.18);background:rgba(212,175,55,.055);border-radius:var(--card-radius, 10px);padding:12px;align-self:stretch;min-width:0}
       .dhq-tutorial-board span{display:block;color:var(--dhq-tutorial-accent,#D4AF37);font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.1em;margin-bottom:7px}
       .dhq-tutorial-board strong{display:block;color:#fff;font-size:17px;line-height:1.1;margin-bottom:8px}
       .dhq-tutorial-board p{margin:0;color:rgba(255,255,255,.66);font-size:12px;line-height:1.45}
@@ -207,7 +207,7 @@
       .dhq-tutorial-fill{height:100%;border-radius:99px;background:var(--dhq-tutorial-accent,#D4AF37);width:0;transition:width .22s ease}
       .dhq-tutorial-count{font-size:11px;color:rgba(255,255,255,.56);font-weight:800;white-space:nowrap}
       .dhq-tutorial-actions{display:flex;align-items:center;gap:8px;margin-top:14px}
-      .dhq-tutorial-btn{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:rgba(255,255,255,.78);border-radius:7px;padding:9px 12px;font:inherit;font-size:13px;font-weight:850;cursor:pointer;min-height:38px}
+      .dhq-tutorial-btn{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:rgba(255,255,255,.78);border-radius:var(--card-radius-sm, 8px);padding:9px 12px;font:inherit;font-size:13px;font-weight:850;cursor:pointer;min-height:38px}
       .dhq-tutorial-btn:hover{border-color:rgba(212,175,55,.4);color:#fff}
       .dhq-tutorial-btn:disabled{opacity:.4;cursor:not-allowed}
       .dhq-tutorial-btn.is-primary{background:var(--dhq-tutorial-accent,#D4AF37);border-color:var(--dhq-tutorial-accent,#D4AF37);color:#080808;flex:1}

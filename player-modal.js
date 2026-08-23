@@ -97,8 +97,8 @@ function _ensureModalDOM() {
         .fwpm-stat-lbl{font-size:13px;color:${_wr.text2};text-transform:uppercase;letter-spacing:.06em;margin-top:5px;font-weight:600}
         .fwpm-section{margin-bottom:14px}
         .fwpm-section-title{font-family:'DM Sans',sans-serif;font-size:13px;font-weight:700;color:${_wr.text2};text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
-        .fwpm-card-box{background:${_wr.panel};border:1px solid ${_wr.border};border-radius:10px;padding:12px}
-        .fwpm-btn{font-size:13px;padding:7px 16px;background:${_wr.panel};border:1px solid ${_wr.border};border-radius:8px;color:${_wr.text2};text-decoration:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:.04em;transition:all .15s;display:inline-block}
+        .fwpm-card-box{background:${_wr.panel};border:1px solid ${_wr.border};border-radius:var(--card-radius, 10px);padding:12px}
+        .fwpm-btn{font-size:13px;padding:7px 16px;background:${_wr.panel};border:1px solid ${_wr.border};border-radius:var(--card-radius-sm, 8px);color:${_wr.text2};text-decoration:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:.04em;transition:all .15s;display:inline-block}
         .fwpm-btn:hover{background:${_wr.goldBg};color:${_wr.gold};border-color:${_wr.gold}}
         .fwpm-btn-gold{background:${_wr.gold};color:${_wr.black};border-color:${_wr.gold}}
         .fwpm-btn-gold:hover{background:#c9a42e}
@@ -116,9 +116,9 @@ function _ensureModalDOM() {
         <button onclick="closeFWPlayerModal()" style="position:absolute;top:12px;right:12px;background:rgba(0,0,0,.5);border:1px solid ${_wr.border};color:${_wr.text2};cursor:pointer;font-size:18px;line-height:1;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;z-index:1;font-weight:400">&times;</button>
         <div style="display:flex;gap:16px;align-items:flex-start">
           <div style="position:relative;flex-shrink:0">
-            <img id="fwpm-photo" src="" style="width:90px;height:90px;border-radius:12px;object-fit:cover;object-position:top;border:2px solid ${_wr.border}" onerror="this.style.display='none';document.getElementById('fwpm-initials').style.display='flex'"/>
-            <div id="fwpm-initials" style="display:none;width:90px;height:90px;border-radius:12px;background:${_wr.panel};align-items:center;justify-content:center;font-size:26px;font-weight:700;color:${_wr.text3};border:2px solid ${_wr.border}"></div>
-            <div id="fwpm-pos" style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);font-size:13px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap"></div>
+            <img id="fwpm-photo" src="" style="width:90px;height:90px;border-radius:var(--card-radius-lg, 14px);object-fit:cover;object-position:top;border:2px solid ${_wr.border}" onerror="this.style.display='none';document.getElementById('fwpm-initials').style.display='flex'"/>
+            <div id="fwpm-initials" style="display:none;width:90px;height:90px;border-radius:var(--card-radius-lg, 14px);background:${_wr.panel};align-items:center;justify-content:center;font-size:26px;font-weight:700;color:${_wr.text3};border:2px solid ${_wr.border}"></div>
+            <div id="fwpm-pos" style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);font-size:13px;font-weight:700;padding:2px 8px;border-radius:var(--card-radius, 10px);white-space:nowrap"></div>
           </div>
           <div style="flex:1;min-width:0;padding-top:2px">
             <div id="fwpm-name" style="font-family:'DM Sans',sans-serif;font-size:22px;font-weight:800;letter-spacing:-.01em;color:${_wr.text};line-height:1.1;margin-bottom:4px"></div>
@@ -139,7 +139,7 @@ function _ensureModalDOM() {
             <div class="fwpm-section-title" style="margin-bottom:0">Age Curve</div>
             <div id="fwpm-peak-tag" style="font-size:13px;color:${_wr.text2}"></div>
           </div>
-          <div id="fwpm-curve" style="display:flex;height:22px;border-radius:5px;overflow:hidden;gap:1px"></div>
+          <div id="fwpm-curve" style="display:flex;height:22px;border-radius:var(--card-radius-xs, 5px);overflow:hidden;gap:1px"></div>
           <div id="fwpm-curve-lbl" style="display:flex;justify-content:space-between;font-size:13px;color:${_wr.text3};margin-top:3px"></div>
         </div>
         <!-- Value + Trade Profile -->
@@ -154,7 +154,7 @@ function _ensureModalDOM() {
         <!-- Career Stats -->
         <div class="fwpm-section">
           <div class="fwpm-section-title" id="fwpm-stats-title">Career Stats</div>
-          <div id="fwpm-career" style="background:${_wr.panel};border:1px solid ${_wr.border};border-radius:8px;padding:10px 12px;overflow-x:auto"></div>
+          <div id="fwpm-career" style="background:${_wr.panel};border:1px solid ${_wr.border};border-radius:var(--card-radius-sm, 8px);padding:10px 12px;overflow-x:auto"></div>
         </div>
         <!-- Actions -->
         <div id="fwpm-actions" style="display:flex;gap:8px;flex-wrap:wrap"></div>
@@ -312,7 +312,7 @@ function _fwTrendPanelInner(pid, slot, key) {
     : `<div style="height:40px;display:flex;align-items:center;justify-content:center;font-size:12px;color:${_wr.text3}">No sample on this stat</div>`;
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:6px">
-      <select onchange="window._fwSetTrendStat('${pid}',${slot},this.value)" style="background:transparent;border:1px solid ${_wr.borderDim};color:${_wr.text2};font-size:11px;border-radius:4px;padding:2px 4px;text-transform:uppercase;letter-spacing:.04em;max-width:62%">${optionsHtml}</select>
+      <select onchange="window._fwSetTrendStat('${pid}',${slot},this.value)" style="background:transparent;border:1px solid ${_wr.borderDim};color:${_wr.text2};font-size:11px;border-radius:var(--card-radius-xs, 5px);padding:2px 4px;text-transform:uppercase;letter-spacing:.04em;max-width:62%">${optionsHtml}</select>
       ${deltaHtml}
     </div>
     ${bodyHtml}`;
@@ -340,7 +340,7 @@ function _fwBuildHistoricalTrends(rows, pos, pid, cols) {
   const defaults = _fwTrendStats[pos] || _fwTrendStats.WR;
   const slotKeys = [0, 1].map(i => (defaults[i] && chartable.find(c => c.k === defaults[i].k)) ? defaults[i].k : (chartable[i] || chartable[0]).k);
   const panels = slotKeys.map((key, i) => `
-    <div id="fwpm-trend-panel-${pid}-${i}" style="flex:1;min-width:170px;background:${_wr.panel};border:1px solid ${_wr.borderDim};border-radius:8px;padding:10px 12px">
+    <div id="fwpm-trend-panel-${pid}-${i}" style="flex:1;min-width:170px;background:${_wr.panel};border:1px solid ${_wr.borderDim};border-radius:var(--card-radius-sm, 8px);padding:10px 12px">
       ${_fwTrendPanelInner(pid, i, key)}
     </div>`).join('');
   return `
@@ -659,7 +659,7 @@ function openFWPlayerModal(playerIdOrObj, playersData, statsData, scoringSetting
 
     if (blurb && insightEl) {
       const bg = blurbCol === _wr.red ? 'rgba(231,76,60,.08)' : blurbCol === _wr.green ? 'rgba(46,204,113,.08)' : 'rgba(212,175,55,.08)';
-      insightEl.innerHTML = `<div style="font-size:13px;color:${blurbCol};line-height:1.45;padding:6px 10px;background:${bg};border-radius:6px;border-left:3px solid ${blurbCol}">${blurb}</div>`;
+      insightEl.innerHTML = `<div style="font-size:13px;color:${blurbCol};line-height:1.45;padding:6px 10px;background:${bg};border-radius:var(--card-radius-sm, 8px);border-left:3px solid ${blurbCol}">${blurb}</div>`;
       // Dynasty Read AI upgrade (paid tier): swap the template for a live,
       // web-search news synthesis when available (shared weekly cache → usually an
       // instant hit). fetchDynastyRead returns '' when not entitled/unavailable, so
@@ -677,7 +677,7 @@ function openFWPlayerModal(playerIdOrObj, playersData, statsData, scoringSetting
           const el = document.getElementById('fwpm-insight');
           if (!el || !el.isConnected) return;
           const esc = String(txt).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          el.innerHTML = `<div style="font-size:13px;color:${blurbCol};line-height:1.45;padding:6px 10px;background:${bg};border-radius:6px;border-left:3px solid ${blurbCol}">${esc}</div>`;
+          el.innerHTML = `<div style="font-size:13px;color:${blurbCol};line-height:1.45;padding:6px 10px;background:${bg};border-radius:var(--card-radius-sm, 8px);border-left:3px solid ${blurbCol}">${esc}</div>`;
         });
       }
     } else if(insightEl) insightEl.innerHTML = '';
@@ -771,7 +771,7 @@ function openFWPlayerModal(playerIdOrObj, playersData, statsData, scoringSetting
   if (rightPanel) {
     const tpTrend = trend >= 15 ? '+'+trend+'%' : trend <= -15 ? trend+'%' : 'Stable';
     const tpTrendCol = trend >= 15 ? _wr.green : trend <= -15 ? _wr.red : _wr.text3;
-    const tpTitle = `<div style="font-size:13px;color:${_wr.text3};text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Trade Profile${isIDP ? ' <span style="font-size:13px;color:'+_wr.gold+';background:rgba(212,175,55,.1);padding:1px 5px;border-radius:4px;font-weight:700;vertical-align:middle;margin-left:4px">IDP</span>' : ''}</div>`;
+    const tpTitle = `<div style="font-size:13px;color:${_wr.text3};text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Trade Profile${isIDP ? ' <span style="font-size:13px;color:'+_wr.gold+';background:rgba(212,175,55,.1);padding:1px 5px;border-radius:var(--card-radius-xs, 5px);font-weight:700;vertical-align:middle;margin-left:4px">IDP</span>' : ''}</div>`;
     const tpRawLine = `<div style="font-size:13px;color:${_wr.text2};margin-top:4px;line-height:1.4">
         <span style="color:${tpTrendCol}">${tpTrend}</span> \u00B7 ${peakYrsLeft > 0 ? peakYrsLeft+' peak yr'+(peakYrsLeft>1?'s':'')+' left' : pk.desc || 'Past value window'}
       </div>`;
