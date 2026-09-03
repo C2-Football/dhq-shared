@@ -593,7 +593,16 @@ window.App = window.App || {};
     if (_assessCache.sig === sig && _assessCache.all) return _assessCache.all;
     const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
     const all = assessAllTeams(S.rosters, S.players, S.playerStats, league, S.leagueUsers, S.tradedPicks);
-    const byId = new Map(all.map(a => [a.rosterId, a]));
+    // Keyed by String(rosterId) — Sleeper's roster_id is a native number, but
+    // callers across the app pass it as either type (numeric straight off a
+    // roster object, or a string via draft/state.js's rosterKey()-style
+    // indexing, template keys, JSON round-trips, etc.). A plain Map keyed on
+    // the raw value made get(1) and get("1") different lookups — an ID
+    // arriving as the "wrong" type got a silent null back, not an error, so
+    // every field this feeds (tier, healthScore, needs...) quietly went
+    // missing for that caller. String() on both the build and lookup side
+    // makes the cache type-agnostic.
+    const byId = new Map(all.map(a => [String(a.rosterId), a]));
     _assessCache = { sig, all, byId };
     return all;
   }
@@ -604,7 +613,7 @@ window.App = window.App || {};
    * set, picks, weekly target) are identical, so the single-team result equals
    * that roster's entry in assessAllTeams. Avoids rebuilding the league-wide
    * intermediates on every call.
-   * @param {number} rosterId - the roster_id to assess
+   * @param {number|string} rosterId - the roster_id to assess (either type accepted)
    * @returns {Object|null}   - assessment object or null
    */
   function assessTeamFromGlobal(rosterId) {
@@ -614,7 +623,7 @@ window.App = window.App || {};
     if (!(_assessCache.sig === sig && _assessCache.byId)) {
       assessAllTeamsFromGlobal(); // (re)builds and caches the full pass
     }
-    return (_assessCache.byId && _assessCache.byId.get(rosterId)) || null;
+    return (_assessCache.byId && _assessCache.byId.get(String(rosterId))) || null;
   }
 
   // ─────────────────────────────────────────────────────────────
