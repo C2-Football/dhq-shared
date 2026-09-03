@@ -42,6 +42,16 @@
   }
 
   function _strategy() {
+    // Routed through GmMode.effects (leagueId-aware resolveStrategy) rather
+    // than the raw window.GMStrategy bypass, which ignored league context
+    // entirely and could return a strategy saved for a DIFFERENT league than
+    // the one currently active (window.S.currentLeagueId). Falls back to the
+    // raw read only if GmMode itself isn't loaded.
+    const leagueId = _S().currentLeagueId;
+    if (window.WR?.GmMode?.effects) {
+      const fx = window.WR.GmMode.effects(leagueId);
+      return fx.hasStrategy ? fx.strategy : {};
+    }
     return (window.GMStrategy?.getStrategy) ? window.GMStrategy.getStrategy() : {};
   }
 
