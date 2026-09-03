@@ -239,6 +239,19 @@
     return calcDraftScore(Number(rank) || 999, pos || '');
   }
 
+  // The nominal DHQ floor for a true UDFA with no draft capital — the SAME
+  // "isUDFA && hasTeam" branch of pickToBase every known-prospect UDFA
+  // already gets, just callable without a prospect record. Exists so
+  // dhq-engine.js can floor a real (years_exp===0, rostered) offensive
+  // rookie who isn't in the prospect consensus at all — a post-draft/depth
+  // signing the consensus board never covered — instead of leaving him at a
+  // literal 0 DHQ forever.
+  function udfaBaselineValue(pos, hasTeam) {
+    const rawPos = String(pos || '').toUpperCase();
+    const mult = FANTASY_MULT[rawPos] || FANTASY_MULT[normPos(rawPos)] || 0.3;
+    return Math.min(10000, Math.round(pickToBase(null, true, !!hasTeam) * mult * 60));
+  }
+
   function valueRankToDynastyBase(rank, pos, customMult) {
     const rawPos = String(pos || '').toUpperCase();
     const mult = customMult || FANTASY_MULT[rawPos] || FANTASY_MULT[normPos(rawPos)] || 0.3;
@@ -724,6 +737,7 @@
     pickToBase,
     draftCapitalValue: valueRankToDraftCapital,
     baseDynastyValue: valueRankToDynastyBase,
+    udfaBaselineValue,
     mergeSyntheticProspects,
     _cache: cache,
     _internals: { normPos, normName, parseCSV, rankToTierBase, pickToBase },

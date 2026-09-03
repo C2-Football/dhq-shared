@@ -2243,13 +2243,30 @@ async function loadLeagueIntel(){
         const prospect=typeof window.findProspect==='function'
           ?window.findProspect(p.full_name||((p.first_name||'')+' '+(p.last_name||'')).trim())
           :null;
-        if(!prospect)return;
-        // Same identity guard as STEP 12b — a fuzzy alias match must never
-        // seed a value off a different player's consensus.
-        const _fTok=s=>String(s||'').toLowerCase().replace(/[^a-z\s]/g,'').trim().split(/\s+/)[0]||'';
-        const _a=_fTok(p.full_name||p.first_name),_b=_fTok(prospect.name);
-        if(_a.length>2&&_b.length>2&&_a!==_b&&!_a.startsWith(_b)&&!_b.startsWith(_a))return;
-        const val=prospect.dynastyValue||prospect.baseDynastyValue||0;
+        let val,source,consensusRank=null;
+        if(prospect){
+          // Same identity guard as STEP 12b — a fuzzy alias match must never
+          // seed a value off a different player's consensus.
+          const _fTok=s=>String(s||'').toLowerCase().replace(/[^a-z\s]/g,'').trim().split(/\s+/)[0]||'';
+          const _a=_fTok(p.full_name||p.first_name),_b=_fTok(prospect.name);
+          if(_a.length>2&&_b.length>2&&_a!==_b&&!_a.startsWith(_b)&&!_b.startsWith(_a))return;
+          val=prospect.dynastyValue||prospect.baseDynastyValue||0;
+          source='PROSPECT_ROOKIE';
+          consensusRank=prospect.consensusRank||prospect.rank||null;
+        }else{
+          // Not in FantasyCalc's data AND not in our prospect consensus at
+          // all (findProspect already covers alias/nickname variants, so
+          // this isn't a name-match miss) — a real UDFA/depth signing the
+          // consensus board never covered. A genuine NFL roster spot is
+          // still a real signal worth a nominal floor: the SAME "isUDFA &&
+          // hasTeam" baseline the engine already gives a KNOWN-but-undrafted
+          // prospect (rookie-data.js pickToBase), just reachable without a
+          // prospect record. No NFL team at all (a tryout/FA add) stays
+          // unscored — no roster spot, no real signal yet.
+          if(!p.team)return;
+          val=typeof window.App?.udfaBaselineValue==='function'?window.App.udfaBaselineValue(pos,true):0;
+          source='UDFA_NO_PROSPECT';
+        }
         // NOT a <50 floor: baseDynastyValue is deliberately tiny for deep/
         // unproven prospects by design (rookie-data.js rankToTierBase/
         // pickToBase bottom out in the single-to-low-double digits) — a
@@ -2268,7 +2285,7 @@ async function loadLeagueIntel(){
           peakYrsLeft:Math.max(0,rookieCurve.peak[1]-rookieAge),
           declineEnd:rookieCurve.decline[1],
           starterSeasons:0,recentGP:0,
-          source:'PROSPECT_ROOKIE',consensusRank:prospect.consensusRank||prospect.rank||null,
+          source,consensusRank,
         };
         offenseRookieCount++;
       });
