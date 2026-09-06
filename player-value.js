@@ -531,7 +531,7 @@ window.App.PlayerValue = (function () {
         if (!ctx.marketRedraft && _isRedraft(skin) && !ctx.noMarketFetch) _ensureRosMarket(league, leagueId);
         const market = ctx.marketRedraft || (_rosMarket.leagueId === leagueId ? _rosMarket.map : null);
         if (_ros && _ros.leagueId === leagueId && _ros.week === week) return _ros; // cached
-        const built = computePrices({ ...ctx, league, leagueId, week, playersData, statsData, priorData, projectionsData, marketRedraft: market });
+        const built = computePrices({ ...ctx, league, leagueId, week, playersData, statsData, priorData, projectionsData, marketRedraft: market, _captureForecast: true });
         _ros = built;
         return _ros;
     }
@@ -679,7 +679,14 @@ window.App.PlayerValue = (function () {
         const ceiling = bestDHQ > 0 ? bestDHQ : ROS_SCALE_CEILING;
         const scale = ceiling / maxVor;
         for (const pid in vor) values[pid] = Math.min(10000, Math.round(vor[pid] * scale));
-        return { leagueId, week, remainingWeeks, points, values, scale, bestDHQ: ceiling, maxVor, replacementPerWk, marketApplied: !!market };
+        const result = { leagueId, week, remainingWeeks, points, values, scale, bestDHQ: ceiling, maxVor, replacementPerWk, marketApplied: !!market };
+        // Side-channel only: failure or absence of the ledger never changes ROS.
+        if (ctx._captureForecast && window.App?.ForecastLedger?.capture) {
+            try {
+                Promise.resolve(window.App.ForecastLedger.capture({ ...ctx, league, leagueId, scoring, playersData, statsData, priorData, projectionsData, marketRedraft: market, totalTeams }, result, perWkByPid)).catch(() => {});
+            } catch (_) { /* non-fatal shadow recording */ }
+        }
+        return result;
     }
 
     // Format-aware value: redraft (with ROS built for the current league) →
