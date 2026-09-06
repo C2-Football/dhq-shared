@@ -89,32 +89,22 @@ function initTrial() {
 }
 
 // ── Tier detection ────────────────────────────────────────────────
-// Returns 'free' | 'trial' | 'paid'
-// DEV_MODE bypass, server-loaded in-memory cache, trial check.
-// Local storage profile/session values are intentionally not trusted for paid
-// access because users can edit them in the browser.
+// Free tier retired (owner decision, 2026-08-30): every user is Pro. Kept as
+// a function (rather than inlining 'paid' at each call site) so canAccess(),
+// isScoutPro(), and the QA/localhost force-tier hook below all stay wired
+// through one place if a paid tier ever needs to be reintroduced.
 function getTier() {
-  if (isSandbox()) return 'paid';
   // Dev-only tier override for QA-ing the free/trial experience locally.
   // Gated to localhost so it can never bypass the paywall in production.
   const _host = window.location?.hostname;
   if ((_host === 'localhost' || _host === '127.0.0.1') && window.__DHQ_FORCE_TIER) {
     return window.__DHQ_FORCE_TIER;
   }
-  if (window.DEV_MODE || ['localhost', '127.0.0.1'].includes(_host)) return 'paid';
-  if (window.App._userTier) return window.App._userTier;
-
-  // Trial window
-  if (isTrialActive()) return 'trial';
-  return 'free';
+  return 'paid';
 }
 
 function isTrialActive() {
-  const startStr = DhqStorage.getStr(STORAGE_KEYS.TRIAL_START, '');
-  if (!startStr) return false;
-  const start = parseInt(startStr, 10);
-  if (isNaN(start)) return false;
-  return (Date.now() - start) < TRIAL_DAYS * 24 * 60 * 60 * 1000;
+  return false;
 }
 
 function getRemainingTrialDays() {
@@ -351,11 +341,9 @@ function getTrialUsage() {
 }
 
 // ── isTrialExpired ────────────────────────────────────────────────
+// Free tier retired: nothing to expire (see getTier()).
 function isTrialExpired() {
-  if (window.DEV_MODE) return false;
-  const startStr = DhqStorage.getStr(STORAGE_KEYS.TRIAL_START, '');
-  if (!startStr) return false; // never started → not expired
-  return !isTrialActive();
+  return false;
 }
 
 // ── Trial banner ──────────────────────────────────────────────────
