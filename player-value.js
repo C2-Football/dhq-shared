@@ -335,6 +335,7 @@ window.App.PlayerValue = (function () {
     // projection line (via WeeklyProj.buildSeasonBaseline), and a capped
     // FantasyCalc REDRAFT market calibration. No age curves, draft capital,
     // or dynasty market may influence redraft values.
+    let _rosInputs = null;
     let _ros = null; // { leagueId, week, remainingWeeks, points:{pid}, values:{pid}, scale }
 
     // ROS value = gross-points share + value-over-replacement share. Tuned
@@ -503,9 +504,8 @@ window.App.PlayerValue = (function () {
         return out;
     }
 
-    // Build + cache the ROS value map. No-op (leaves _ros null → getValue
-    // falls back to DHQ) when not redraft, projections/DHQ unavailable, or no
-    // weeks remain. ctx = { leagueId, league, playersData, statsData, priorData, skin }.
+    // Build + cache the ROS value map. Missing seasonal evidence stays unknown.
+    // No map is built when projections are unavailable or no weeks remain. ctx = { leagueId, league, playersData, statsData, priorData, skin }.
     function ensureRos(ctx) {
         ctx = ctx || {};
         const skin = ctx.skin || window.App?.LeagueSkin?.getCurrent?.() || null;
@@ -530,7 +530,9 @@ window.App.PlayerValue = (function () {
         // kick the per-league FantasyCalc REDRAFT fetch (redraft only).
         if (!ctx.marketRedraft && _isRedraft(skin) && !ctx.noMarketFetch) _ensureRosMarket(league, leagueId);
         const market = ctx.marketRedraft || (_rosMarket.leagueId === leagueId ? _rosMarket.map : null);
-        if (_ros && _ros.leagueId === leagueId && _ros.week === week) return _ros; // cached
+        const inputs = [playersData, statsData, priorData, projectionsData, market, ctx.playerScores || window.App?.LI?.playerScores, JSON.stringify([league.scoring_settings,league.roster_positions,league.settings?.playoff_week_start,league.total_rosters])];
+        if (_ros && _ros.leagueId === leagueId && _ros.week === week && _rosInputs && inputs.every((v,i)=>v===_rosInputs[i])) return _ros;
+        _rosInputs = inputs;
         const built = computePrices({ ...ctx, league, leagueId, week, playersData, statsData, priorData, projectionsData, marketRedraft: market, _captureForecast: true });
         _ros = built;
         return _ros;
@@ -689,12 +691,12 @@ window.App.PlayerValue = (function () {
         return result;
     }
 
-    // Format-aware value: redraft (with ROS built for the current league) →
-    // scaled ROS; otherwise → dynasty DHQ. Drop-in for App.LI.playerScores[pid].
+    // Redraft uses current-league ROS or null when unavailable; other formats use DHQ.
     function getValue(pid, opts) {
         opts = opts || {};
-        if (_isRedraft(opts.skin) && _ros && _ros.leagueId === _currentLeagueId() && _ros.values[pid] != null) {
-            return _ros.values[pid];
+        if (_isRedraft(opts.skin)) {
+            // Missing seasonal evidence is not permission to use dynasty value.
+            return getSeasonValue(pid);
         }
         return (window.App?.LI?.playerScores?.[pid]) || 0;
     }
@@ -714,6 +716,10 @@ window.App.PlayerValue = (function () {
         // toward zero for exactly the stashes a keeper call cares most about.
         if (!rosReady) return dynastyVal;
         return Math.min(10000, Math.round(KEEPER_DYNASTY_WT * dynastyVal + KEEPER_ROS_WT * _ros.values[pid]));
+    }
+    function getSeasonValue(pid) {
+        const week = window.App?.WeeklyProj?.currentWeek?.() ?? window.S?.currentWeek ?? _ros?.week;
+        return _ros && _ros.leagueId === _currentLeagueId() && _ros.week === week && _ros.values[pid] != null ? _ros.values[pid] : null;
     }
     // Raw projected ROS points for display (null when not built for this league).
     function getRosPoints(pid) {
@@ -745,7 +751,8 @@ window.App.PlayerValue = (function () {
     function valueMap(opts) {
         const raw = window.App?.LI?.playerScores || {};
         if (typeof getValue !== 'function') return raw;
-        return new Proxy(raw, { get: (t, k) => (typeof k === 'string' && k in t) ? getValue(k, opts) : t[k] });
+        const keys = { ...raw, ...(_isRedraft(opts?.skin) && _ros?.leagueId === _currentLeagueId() ? _ros.values : {}) };
+        return new Proxy(keys, { get: (t, k) => (typeof k === 'string' && k in t) ? getValue(k, opts) : t[k] });
     }
 
     return {
@@ -776,6 +783,7 @@ window.App.PlayerValue = (function () {
         getValue,
         getKeeperValue,
         getRosPoints,
+        getSeasonValue,
         rosState,
         valueMap,
     };
