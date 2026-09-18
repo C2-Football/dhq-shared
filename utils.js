@@ -70,9 +70,13 @@ function isElitePlayer(pid) {
   if (score >= 7000) return true;
   const pos = normPos(meta[id]?.pos || meta[pid]?.pos || '');
   if (!pos || !score) return false;
-  // Get all players at this position, sorted by DHQ.
-  const atPos = Object.entries(scores)
-    .filter(([p]) => normPos(meta[p]?.pos || '') === pos)
+  // Select the position before reading values. valueMap may be a format-aware
+  // proxy whose getters calculate ROS/keeper values; Object.entries eagerly
+  // recalculated every other position for each player inspected by a roster.
+  // Keep the original key order and stable sort so tied top-five ranks agree.
+  const atPos = Object.keys(scores)
+    .filter(p => normPos(meta[p]?.pos || '') === pos)
+    .map(p => [p, scores[p]])
     .sort((a, b) => b[1] - a[1]);
   const rank = atPos.findIndex(([p]) => String(p) === id);
   return rank >= 0 && rank < 5;
@@ -80,6 +84,32 @@ function isElitePlayer(pid) {
 
 function countElitePlayers(pids) {
   return (pids || []).filter(pid => isElitePlayer(String(pid))).length;
+}
+
+// Explicit immutable input snapshot for synchronous bulk forecasts. Rank each
+// position once instead of rebuilding the universe for every projected season.
+// Callers create a new snapshot for each capture; normal reads remain live.
+function createElitePlayerSnapshot() {
+  const scores = (window.App?.PlayerValue?.valueMap ? window.App.PlayerValue.valueMap() : null) || window.App?.LI?.playerScores || {};
+  const meta = window.App?.LI?.playerMeta || {};
+  const values = new Map(), positions = new Map(), groups = new Map(), topFive = new Set();
+  for (const [id, value] of Object.entries(scores)) {
+    const pos = normPos(meta[id]?.pos || '');
+    values.set(id, Number(value ?? 0));
+    positions.set(id, pos);
+    if (pos) {
+      if (!groups.has(pos)) groups.set(pos, []);
+      groups.get(pos).push([id, value]);
+    }
+  }
+  for (const group of groups.values()) {
+    group.sort((a, b) => b[1] - a[1]);
+    for (const [id] of group.slice(0, 5)) topFive.add(id);
+  }
+  return pid => {
+    const id = String(pid), score = values.get(id) || 0;
+    return score >= 7000 || !!(score && positions.get(id) && topFive.has(id));
+  };
 }
 
 // ── dhqLog — structured error logging ────────────────────────────
@@ -108,6 +138,7 @@ window.App.DEPTH_POSITIONS    = DEPTH_POSITIONS;
 window.App.calcRawPts         = calcRawPts;
 window.App.isElitePlayer      = isElitePlayer;
 window.App.countElitePlayers  = countElitePlayers;
+window.App.createElitePlayerSnapshot = createElitePlayerSnapshot;
 
 // ── Expose as bare globals for inline handlers / legacy code ────
 window.normPos            = normPos;

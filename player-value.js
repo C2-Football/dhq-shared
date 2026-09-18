@@ -241,8 +241,9 @@ window.App.PlayerValue = (function () {
         const inSeason = month >= 8 || month <= 1; // Sep–Feb
         const halfLife = inSeason ? 1.5 : 3.0;
 
-        const isElite  = typeof window.App?.isElitePlayer === 'function'
-                         ? window.App.isElitePlayer(pid) : baseDhq >= 7000;
+        const isElite  = typeof meta?.elite === 'boolean' ? meta.elite
+                         : typeof window.App?.isElitePlayer === 'function'
+                           ? window.App.isElitePlayer(pid) : baseDhq >= 7000;
         const isProven = baseDhq >= 4000;
         const peakMid  = Math.floor((pLo + pHi) / 2);
 
