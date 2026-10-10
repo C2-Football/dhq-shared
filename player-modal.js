@@ -351,7 +351,8 @@ function _fwBuildHistoricalTrends(rows, pos, pid, cols) {
 }
 
 // ── Build career stats table ──────────────────────────────────
-function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
+function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj, options) {
+  const includeHistoricalTrends = options?.includeHistoricalTrends !== false;
   const isIDP = ['DL','LB','DB'].includes(pos);
   const isQB = pos === 'QB';
   const isRB = pos === 'RB';
@@ -470,7 +471,7 @@ function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
         ${cols.map(c => `<div style="font-weight:600;text-align:right;color:${_wr.text}">${fmt(r[c.k], c.k)}</div>`).join('')}
       </div>`).join('')}
     ${totalsRow}
-    ${_fwBuildHistoricalTrends(rows, pos, pid, cols)}`;
+    ${includeHistoricalTrends ? _fwBuildHistoricalTrends(rows, pos, pid, cols) : ''}`;
 }
 
 // ── Main: open player modal ────────────────────────────────────
