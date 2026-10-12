@@ -32,6 +32,8 @@ function _liTtl(){
 }
 let LI={}; // LeagueIntel data object — populated async after connect
 let LI_LOADED=false;
+let _liRunSequence=0;
+let _liActiveRun=null;
 
 const DHQ_DEFAULT_AGE_CURVES={
   QB:{build:[23,27],peak:[28,34],decline:[35,38]},
@@ -615,20 +617,30 @@ function loadLICache(){
   if(!d)return false;
   if(Date.now()-d.ts>_liTtl())return false;
   const S=window.App.S||window.S;
-  if(!S||d.leagueId!==S.currentLeagueId)return false;
-  LI=d.data;LI_LOADED=true;
+  if(!S||!S.currentLeagueId||String(d.leagueId)!==String(S.currentLeagueId))return false;
+  if(!d.data||typeof d.data!=='object'||Array.isArray(d.data))return false;
+  const sourceLeagueId=String(d.leagueId);
+  if(d.data.sourceLeagueId!=null&&String(d.data.sourceLeagueId)!==sourceLeagueId)return false;
+  const cached={...d.data,sourceLeagueId};
+  LI=cached;LI_LOADED=true;
   console.log('LeagueIntel loaded from cache');
   // Emit after current call stack clears — ensures UI listeners are registered first
-  setTimeout(()=>{if(window.DhqEvents)window.DhqEvents.emit('li:loaded',{source:'cache'});},0);
+  setTimeout(()=>{
+    const current=window.App.S||window.S;
+    if(LI===cached&&LI_LOADED&&String(current?.currentLeagueId||'')===sourceLeagueId&&window.DhqEvents){
+      window.DhqEvents.emit('li:loaded',{source:'cache',leagueId:sourceLeagueId});
+    }
+  },0);
   return true;
 }
 
 function saveLICache(){
-  const S=window.App.S||window.S;
+  if(!LI_LOADED||!LI.sourceLeagueId)return false;
   // Strip non-serializable functions before caching
   const cacheable={...LI};
   delete cacheable.dhqPickValueFn;
-  DhqStorage.set(LI_CACHE_KEY,{ts:Date.now(),leagueId:S.currentLeagueId,data:cacheable});
+  DhqStorage.set(LI_CACHE_KEY,{ts:Date.now(),leagueId:String(LI.sourceLeagueId),data:cacheable});
+  return true;
 }
 
 // Get LeagueIntel value for a player (replaces dynastyValue for IDP)
@@ -655,11 +667,20 @@ function livDraftADP(pos){
 // Caches historical data permanently (past drafts/stats never change)
 // Only refreshes current season on each load
 async function loadLeagueIntel(){
-  if(LI_LOADED)return; // already loaded
-  if(window._liLoading)return; // already in progress
+  const liveState=window.App.S||window.S;
+  if(!liveState){console.warn('[Scout] No state object found (window.App.S or window.S)');return;}
+  const sourceLeagueId=String(liveState.currentLeagueId||'');
+  if(!sourceLeagueId)return;
+  if(LI_LOADED&&String(LI.sourceLeagueId||'')===sourceLeagueId)return;
+  if(window._liLoading&&_liActiveRun?.sourceLeagueId===sourceLeagueId)return;
+  // Hydration replaces fields on global S when changing leagues. Keep this
+  // run's inputs and identity together, and let a new league supersede it.
+  const S={...liveState};
+  const run={sequence:++_liRunSequence,sourceLeagueId};
+  _liActiveRun=run;
+  LI_LOADED=false;
   window._liLoading=true;
-  const S=window.App.S||window.S;
-  if(!S){console.warn('[Scout] No state object found (window.App.S or window.S)');window._liLoading=false;return;}
+  const isCurrentRun=()=>_liActiveRun===run&&String((window.App.S||window.S)?.currentLeagueId||'')===sourceLeagueId;
   const posMap=window.App.posMap||window.posMap;
   const pName=window.App.pName||window.pName||(id=>{const p=S.players?.[id];return p?(p.full_name||((p.first_name||'')+' '+(p.last_name||'')).trim()||id):id;});
   const pPos=window.App.pPos||window.pPos||(id=>S.players?.[id]?.position||'');
@@ -671,8 +692,7 @@ async function loadLeagueIntel(){
   const sfStats=window.Sleeper?.fetchSeasonStats||(yr=>sf('/stats/nfl/regular/'+yr).catch(()=>({})));
   const SLEEPER=window.App.SLEEPER||window.SLEEPER||'https://api.sleeper.app/v1';
   try{
-  if(loadLICache()){window._liLoading=false;return;}
-  if(!S.currentLeagueId){window._liLoading=false;return;}
+  if(loadLICache())return;
 
   const league=S.leagues.find(l=>l.league_id===S.currentLeagueId);
   const sc=league?.scoring_settings||{};
@@ -2412,7 +2432,9 @@ async function loadLeagueIntel(){
     // ═══════════════════════════════════════════════════════════════
     // STORE EVERYTHING
     // ═══════════════════════════════════════════════════════════════
+    if(!isCurrentRun())return;
     LI={
+      sourceLeagueId,
       // Player values (DHQ engine — league-derived)
       playerScores,     // pid -> 0-10000 DHQ value
       playerMeta,       // pid -> {pos, ppg, age, ageFactor, peakYrsLeft}
@@ -2470,12 +2492,12 @@ async function loadLeagueIntel(){
   Pick 1.01 value: ${dhqPickValues[1]?.value}, R7 last pick: ${dhqPickValues[maxPicks]?.value}`);
 
     // Notify subscribers that LeagueIntel is ready (replaces direct render calls)
-    if(window.DhqEvents)window.DhqEvents.emit('li:loaded',{source:'fresh'});
+    if(window.DhqEvents)window.DhqEvents.emit('li:loaded',{source:'fresh',leagueId:sourceLeagueId});
 
   }catch(e){
     console.warn('LeagueIntel error:',e);
   }
-  }finally{window._liLoading=false;}
+  }finally{if(_liActiveRun===run){window._liLoading=false;_liActiveRun=null;}}
 }
 
 // Get display value — DHQ (LI) score
