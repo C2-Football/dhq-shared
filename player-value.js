@@ -368,12 +368,12 @@ window.App.PlayerValue = (function () {
         return String(window.S?.currentLeagueId
             || window.App?.LeagueSkin?.getCurrent?.()?.leagueId || '');
     }
-    // CHOPPED counts as redraft here: it is a one-season format, so value is
-    // rest-of-season, never dynasty. (The survival-weighted horizon is a
-    // later phase — season-end is already vastly closer than dynasty DHQ.)
+    // Seasonal skins price the remaining season. Keeper uses its separate
+    // dynasty/ROS blend even when a surface hides the age curve.
     function _isRedraft(skin) {
         const s = skin || window.App?.LeagueSkin?.getCurrent?.() || null;
-        return !!s && (s.type === 'redraft' || s.type === 'chopped');
+        return !!s && s.type !== 'keeper' && (s.features?.showAgeCurve === false
+            || ['redraft', 'chopped', 'best_ball', 'bestball', 'dfs'].includes(s.type));
     }
     function _isKeeper(skin) {
         const s = skin || window.App?.LeagueSkin?.getCurrent?.() || null;
