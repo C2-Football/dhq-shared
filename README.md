@@ -53,3 +53,31 @@ hand-curated data): `draft-war-room/player.csv`, `draft-war-room/player-enrichme
 and load them **same-origin** from their own deploy — neither fetches them cross-repo.
 War-Room-only draft-tool data (`player-sources.csv`, `prospects_test_2025.csv`,
 `players-final.json`) stays in the WarRoom repo.
+
+## Redraft reliability handoff (local, 2026-10-27)
+
+The scoring implementation in `sleeper-api.js` is authoritative. Forecasts use
+`WeeklyProj → StartSit → calcFantasyPts`; `.detailed()` reports unsupported rules.
+Nonzero unsupported scoring rules make a forecast unavailable. An omitted setting
+contributes zero. Canonical IDP aliases take precedence over their alternate names,
+including explicit zero, while team D/ST uses ordinary `sack` / `int` rules.
+
+WarRoom synchronizes `startsit-engine.js`, `weekly-proj.js`, and `nfl-context.js`
+into its direct-script paths at build time. These former manual twins now use the
+current WarRoom implementations as the shared source. `player-value.js` retains
+its existing byte-identical twin check. Other consumers must validate these API
+updates before adopting the coordinated release.
+
+Run `node tests/redraft-scoring.cjs`, `node tests/elite-player.cjs`, and
+`node tests/league-intel-provenance.cjs`. The app's `test:redraft-reliability` suite
+adds scoped cache/retry, availability, eligibility, trade and UI fixtures.
+The legacy `isRedraftActive()` caller gate now denotes seasonal **format**, even
+when values have not loaded; `rosState()` is the separate readiness check.
+`getValue()` returns `null` for missing seasonal evidence and preserves actual zero.
+The legacy negotiation API remains numeric for compatibility; it is an
+uncalibrated comparison score, not a probability.
+
+This branch is a local candidate. Publish and verify the final shared commit only
+with release authorization, then update the app's pinned dependency to that exact
+accessible commit and run its sync, tests and production build. Never deploy the
+app with a private/unpublished local SHA in its active checkout step.

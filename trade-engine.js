@@ -141,7 +141,8 @@
   }
 
   // ── calcAcceptanceLikelihood ─────────────────────────────────
-  // Canonical acceptance % for a trade offer.
+  // Comparative negotiation score for a trade offer. Not a probability.
+  // Legacy function name remains for API compatibility; no calibration evidence exists.
   // myValue = DHQ total of what user GIVES, theirValue = what user RECEIVES.
   // Returns integer 5-95.
   //
@@ -220,6 +221,8 @@
     calcOwnerPosture,
     calcPsychTaxes,
     calcAcceptanceLikelihood,
+    negotiationScore: calcAcceptanceLikelihood,
+    negotiationMethod: { calibrated: false, unit: 'score out of 100', basis: 'Hand-set package-price, roster-fit and manager-context comparison; not acceptance odds.' },
     fairnessGrade,
     calcGrudgeTax,
     GRUDGE_TYPES,

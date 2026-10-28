@@ -9,10 +9,8 @@
 // yardage bonuses) for free. The AI never invents numbers — it narrates
 // this deterministic output only.
 //
-// NOTE: warroom-local copy (loaded via a direct <script> tag). The dev
-// server regenerates warroom/reconai-shared/, so this engine lives under
-// js/shared/ (hand-authored, persistent). Canonical twin for Node tests:
-// reconai/shared/startsit-engine.js — keep them in sync.
+// Canonical source: C2-Football/dhq-shared. WarRoom sync copies this file
+// to js/shared/startsit-engine.js before building production entrypoints.
 (function (root) {
     'use strict';
     const App = root.App = root.App || {};
@@ -20,7 +18,7 @@
     // Production stat categories that scale with matchup/usage. Negative
     // events (INTs, fumbles) and binary kicker/DEF events are NOT scaled by
     // DvP/Vegas — only volume/efficiency is.
-    const PASS_FIELDS = ['pass_yd', 'pass_td', 'pass_2pt', 'pass_cmp', 'pass_att'];
+    const PASS_FIELDS = ['pass_yd', 'pass_td', 'pass_2pt', 'pass_cmp', 'pass_att', 'pass_fd'];
     const RUSH_FIELDS = ['rush_yd', 'rush_td', 'rush_2pt', 'rush_att', 'rush_fd'];
     const RECV_FIELDS = ['rec', 'rec_yd', 'rec_td', 'rec_2pt', 'rec_tgt', 'rec_fd'];
     const PRODUCTION_FIELDS = new Set([].concat(PASS_FIELDS, RUSH_FIELDS, RECV_FIELDS));
@@ -42,6 +40,7 @@
     function normSlot(slot) {
         const raw = String(slot || '').trim().toUpperCase();
         if (raw === 'D/ST' || raw === 'DST') return 'DEF';
+        if (raw === 'PK') return 'K'; // MFL kicker slot code
         if (raw === 'SUPERFLEX') return 'SUPER_FLEX';
         if (raw === 'WR/RB/TE' || raw === 'W/R/T') return 'FLEX';
         if (raw === 'WR/TE' || raw === 'W/T') return 'REC_FLEX';
@@ -139,14 +138,16 @@
     }
 
     // ── Availability ─────────────────────────────────────────────────
-    const OUT_STATUSES = new Set(['OUT', 'IR', 'PUP', 'SUS', 'NA', 'DNP', 'BYE', 'COV']);
+    // 'FA' = no NFL team, so no game — weekly-proj tags it (hasNflTeam) and it
+    // has to zero out here too, or the optimizer keeps ranking an unsigned
+    // player into the recommended lineup.
+    const OUT_STATUSES = new Set(['OUT', 'IR', 'PUP', 'SUS', 'NA', 'DNP', 'BYE', 'COV', 'FA']);
     function availability(injuryStatus) {
         const s = String(injuryStatus || '').trim().toUpperCase();
         if (!s) return { available: true, mult: 1, floorPenalty: 0 };
         if (OUT_STATUSES.has(s)) return { available: false, mult: 0, floorPenalty: 0 };
-        if (s === 'D' || s === 'DOUBTFUL') return { available: true, mult: 0.6, floorPenalty: 0.15 };
-        if (s === 'Q' || s === 'QUESTIONABLE') return { available: true, mult: 0.92, floorPenalty: 0.1 };
-        return { available: true, mult: 1, floorPenalty: 0 };
+        if (s === 'HEALTHY' || s === 'ACTIVE') return { available: true, mult: 1, floorPenalty: 0 };
+        return { available: false, mult: 1, floorPenalty: 0, unknown: true };
     }
 
     function matchupGrade(dvpMult, impliedTotal) {
@@ -189,6 +190,7 @@
             week: input.week,
             position: pos,
             available: avail.available && !!median,
+            availabilityUnknown: !!avail.unknown,
             statLine: { median, floor, ceiling },
             matchupGrade: median ? matchupGrade(input.dvpMult, impliedTotal) : 'C',
             opponent: input.opponent || (input.vegas ? { abbr: input.vegas.opp, impliedTotal: input.vegas.impliedTotal, spread: input.vegas.spread } : null),
@@ -206,12 +208,15 @@
         const score = calcFn || root.calcFantasyPts || (App.Sleeper && App.Sleeper.calcFantasyPts);
         if (typeof score !== 'function') throw new Error('startsit: no calcFantasyPts available');
         const sl = (proj && proj.statLine) || {};
+        const details = typeof score.detailed === 'function' ? score.detailed(sl.median, scoring, proj?.position) : null;
+        const scoreLine = line => line ? score(line, scoring, proj?.position) : 0;
         const pts = {
-            median: sl.median ? score(sl.median, scoring) : 0,
-            floor: sl.floor ? score(sl.floor, scoring) : 0,
-            ceiling: sl.ceiling ? score(sl.ceiling, scoring) : 0,
+            median: scoreLine(sl.median),
+            floor: scoreLine(sl.floor),
+            ceiling: scoreLine(sl.ceiling),
         };
-        return { ...proj, points: pts };
+        if (proj.availabilityUnknown && details?.supported !== false) return { ...proj, conditionalPoints: pts, points: { median: null, floor: null, ceiling: null }, scoringSupport: details, available: false, unavailableReason: 'Participation is unresolved; healthy-production scenario only. No participation probability assumed.' };
+        return { ...proj, points: pts, scoringSupport: details, available: proj.available !== false && details?.supported !== false, ...(details?.supported === false ? { points: { median: null, floor: null, ceiling: null }, unavailableReason: 'Unsupported scoring: ' + details.unsupported.join(', ') } : {}) };
     }
 
     // ── Lineup solver ────────────────────────────────────────────────
@@ -291,5 +296,6 @@
     };
 
     App.StartSit = App.StartSit || StartSit;
+    /* global module */
     if (typeof module !== 'undefined' && module.exports) module.exports = StartSit;
 })(typeof window !== 'undefined' ? window : globalThis);

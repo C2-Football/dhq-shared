@@ -69,21 +69,24 @@ const _sleeperIDB = (() => {
 })();
 
 // ── Player DB cache (persisted in IndexedDB via _sleeperIDB) ─────
+let _cacheGeneration = 0;
 let _playersCache = null;
 let _playersCacheTime = 0;
 let _playersInflight = null;
-const PLAYERS_TTL = 60 * 60 * 1000; // 1 hour
+const PLAYERS_TTL = 15 * 60 * 1000; // availability data freshness
 
 async function fetchPlayers() {
   // Check memory cache
   if (_playersCache && Date.now() - _playersCacheTime < PLAYERS_TTL) return _playersCache;
   // Dedup concurrent callers so the ~15MB payload is fetched at most once.
   if (_playersInflight) return _playersInflight;
-  _playersInflight = (async () => {
+  const generation = _cacheGeneration;
+  const request = _playersInflight = (async () => {
     // Check the persistent IndexedDB cache
     try {
-      const cached = await _sleeperIDB.get('fw_players_cache');
+      const cached = generation === 0 ? await _sleeperIDB.get('fw_players_cache') : null;
       if (cached && cached.data && Date.now() - cached.ts < PLAYERS_TTL) {
+        if (generation !== _cacheGeneration) throw new Error('Player request superseded');
         _playersCache = cached.data;
         _playersCacheTime = cached.ts;
         return cached.data;
@@ -91,6 +94,8 @@ async function fetchPlayers() {
     } catch (e) { /* IDB unavailable — fall through to refetch */ }
     // Fetch fresh
     const data = await sleeperFetch('/players/nfl');
+    if (generation !== _cacheGeneration) throw new Error('Player request superseded');
+    if (!data || !Object.keys(data).length) throw new Error('Players unavailable');
     _playersCache = data;
     _playersCacheTime = Date.now();
     // Fire-and-forget persist — never block returning data on the write.
@@ -98,9 +103,9 @@ async function fetchPlayers() {
     return data;
   })();
   try {
-    return await _playersInflight;
+    return await request;
   } finally {
-    _playersInflight = null;
+    if (_playersInflight === request) _playersInflight = null;
   }
 }
 
@@ -120,7 +125,7 @@ const _statsCache = {};              // season → {data, ts} (in-memory, fast p
 // error and halt core.js before it sets window.App.WrStorage).
 const _sleeperProjectionsCache = {}; // season → {data, ts} (in-memory, fast path)
 const _seasonInflight = {};          // idbKey → Promise (dedup concurrent fetches)
-const _SEASON_LIVE_TTL = 60 * 60 * 1000;            // 1h  — in-progress season
+const _SEASON_LIVE_TTL = 15 * 60 * 1000;            // 15m — in-progress season
 const _SEASON_DONE_TTL = 30 * 24 * 60 * 60 * 1000;  // 30d — completed seasons (immutable)
 
 // Completed seasons (before the current calendar year) never change. In the
@@ -137,23 +142,27 @@ async function _fetchSeasonCached(season, memCache, idbKey, path) {
   const mem = memCache[season];
   if (mem && mem.data && Date.now() - mem.ts < _seasonTtl(season)) return mem.data;
   if (_seasonInflight[idbKey]) return _seasonInflight[idbKey];
-  _seasonInflight[idbKey] = (async () => {
+  const generation = _cacheGeneration;
+  const request = _seasonInflight[idbKey] = (async () => {
     const ttl = _seasonTtl(season);
     try {
-      const cached = await _sleeperIDB.get(idbKey);
+      const cached = generation === 0 ? await _sleeperIDB.get(idbKey) : null;
       if (cached && cached.data && Date.now() - cached.ts < ttl) {
+        if (generation !== _cacheGeneration) throw new Error('Season request superseded');
         memCache[season] = { data: cached.data, ts: cached.ts };
         return cached.data;
       }
     } catch (e) { /* IDB unavailable — fall through to refetch */ }
     const data = await sleeperFetch(path);
-    memCache[season] = { data, ts: Date.now() };
+    if (generation !== _cacheGeneration) throw new Error('Season request superseded');
+    if (!data || !Object.keys(data).length) throw new Error('Season data unavailable');
+    memCache[season] = { data, ts: Date.now(), providerAsOf: null };
     // Fire-and-forget persist — never block returning data on the write.
     _sleeperIDB.set(idbKey, { data, ts: Date.now() }).catch(() => {});
     return data;
   })();
-  try { return await _seasonInflight[idbKey]; }
-  finally { delete _seasonInflight[idbKey]; }
+  try { return await request; }
+  finally { if (_seasonInflight[idbKey] === request) delete _seasonInflight[idbKey]; }
 }
 
 // Keys carry a _v2 suffix so they live in IndexedDB, never colliding with the
@@ -172,6 +181,8 @@ async function fetchSeasonProjections(season) {
 // season; IndexedDB entries are deleted only for LIVE seasons — completed
 // seasons are immutable, so re-downloading those multi-MB blobs is pure waste.
 function clearSeasonCaches() {
+  _cacheGeneration++; _playersInflight = null;
+  Object.keys(_seasonInflight).forEach(key => delete _seasonInflight[key]);
   const yr = new Date().getFullYear();
   [[_statsCache, 'fw_stats_v2_'], [_sleeperProjectionsCache, 'fw_proj_v2_']].forEach(([cache, prefix]) => {
     Object.keys(cache).forEach(season => {
@@ -217,93 +228,55 @@ async function fetchLosersBracket(leagueId) {
 // Full scoring: offense + IDP (prefixed & non-prefixed) + kicking + special teams.
 // `stats` = raw stat line from Sleeper, `sc` = league scoring_settings object.
 
-function calcFantasyPts(stats, sc) {
-  if (!stats) return 0;
-  let pts = 0;
-  // Use ?? so leagues that explicitly set a scoring value to 0 aren't overridden by defaults
-  var add = function (stat, mult) { pts += (stats[stat] || 0) * (mult ?? 0); };
-
-  // Offense — passing
-  add('pass_yd',   sc.pass_yd   ?? 0);
-  add('pass_td',   sc.pass_td   ?? 4);
-  add('pass_int',  sc.pass_int  ?? -1);
-  add('pass_2pt',  sc.pass_2pt  ?? 0);
-  add('pass_sack', sc.pass_sack ?? 0);
-
-  // Offense — rushing
-  add('rush_yd',  sc.rush_yd  ?? 0.1);
-  add('rush_td',  sc.rush_td  ?? 6);
-  add('rush_2pt', sc.rush_2pt ?? 0);
-  add('rush_fd',  sc.rush_fd  ?? 0);
-
-  // Offense — receiving
-  add('rec',     sc.rec     ?? 0.5);
-  add('rec_yd',  sc.rec_yd  ?? 0.1);
-  add('rec_td',  sc.rec_td  ?? 6);
-  add('rec_2pt', sc.rec_2pt ?? 0);
-  add('rec_fd',  sc.rec_fd  ?? 0);
-
-  // Fumbles
-  add('fum_lost',   sc.fum_lost   ?? -0.5);
-  add('fum_rec_td', sc.fum_rec_td ?? 0);
-
-  // Kicking
-  add('xpm',          sc.xpm          ?? 0);
-  add('xpmiss',       sc.xpmiss       ?? 0);
-  add('fgm',          sc.fgm          ?? 0);
-  add('fgm_0_19',     sc.fgm_0_19     ?? 0);
-  add('fgm_20_29',    sc.fgm_20_29    ?? 0);
-  add('fgm_30_39',    sc.fgm_30_39    ?? 0);
-  add('fgm_40_49',    sc.fgm_40_49    ?? 0);
-  add('fgm_50p',      sc.fgm_50p      ?? 0);
-  add('fgm_50_59',    sc.fgm_50_59    ?? 0);
-  add('fgm_60p',      sc.fgm_60p      ?? 0);
-  add('fgm_yds',      sc.fgm_yds      ?? 0);
-  add('fgmiss',       sc.fgmiss       ?? 0);
-  add('fgmiss_0_19',  sc.fgmiss_0_19  ?? 0);
-  add('fgmiss_20_29', sc.fgmiss_20_29 ?? 0);
-
-  // IDP — try both idp-prefixed and non-prefixed field names (Sleeper uses both)
-  var idpFields = [
-    ['idp_tkl_solo',  'tkl_solo'],
-    ['idp_tkl_ast',   'tkl_ast'],
-    ['idp_tkl_loss',  'tkl_loss'],
-    ['idp_sack',      'sack'],
-    ['idp_qb_hit',    'qb_hit'],
-    ['idp_int',       'int'],
-    ['idp_ff',        'ff'],
-    ['idp_fum_rec'],
-    ['idp_pass_def',  'pass_def'],
-    ['idp_pass_def_3p'],
-    ['idp_def_td',    'def_td'],
-    ['idp_blk_kick'],
-    ['idp_safe'],
-    ['idp_sack_yd'],
-    ['idp_int_ret_yd'],
-    ['idp_fum_ret_yd'],
-  ];
-  idpFields.forEach(function (names) {
-    var scKey = names[0]; // scoring setting key is always idp_ prefixed
-    var mult = sc[scKey] ?? 0;
-    if (!mult) return;
-    // Try each field name variant, use first non-zero
-    var val = 0;
-    for (var i = 0; i < names.length; i++) {
-      if (stats[names[i]]) { val = stats[names[i]]; break; }
-    }
-    pts += val * mult;
-  });
-
-  // Special teams
-  add('st_td',       sc.st_td       ?? 0);
-  add('st_ff',       sc.st_ff       ?? 0);
-  add('st_fum_rec',  sc.st_fum_rec  ?? 0);
-  add('st_tkl_solo', sc.st_tkl_solo ?? 0);
-  add('kr_yd',       sc.kr_yd       ?? 0);
-  add('pr_yd',       sc.pr_yd       ?? 0);
-
-  return Math.round(pts * 10) / 10;
+// One scorer for production projections and raw NFL lines. Missing settings are
+// zero; explicit zero wins over aliases. Thresholds use the provider event count
+// when supplied, otherwise the raw yardage. Unknown rules are reported, not used.
+function calcFantasyPtsDetailed(stats, sc, position) {
+  stats = stats || {}; sc = sc || {};
+  const pos = String(position || stats.position || '').toUpperCase();
+  const aliases = {
+    idp_tkl: ['tkl'], idp_tkl_solo: ['tkl_solo'], idp_tkl_ast: ['tkl_ast'], idp_tkl_loss: ['tkl_loss'],
+    idp_sack: ['sack'], idp_int: ['int'], idp_qb_hit: ['qb_hit'], idp_ff: ['ff'],
+    idp_pass_def: ['pass_def'], idp_def_td: ['def_td'], idp_fum_rec: ['fum_rec'],
+    idp_blk_kick: ['blk_kick'], idp_safe: ['safe'],
+  };
+  const direct = new Set(('pass_yd pass_td pass_int pass_2pt pass_sack pass_cmp pass_att pass_inc pass_fd rush_yd rush_td rush_2pt rush_att rush_fd rec rec_yd rec_td rec_2pt rec_fd rec_tgt fum fum_lost fum_rec_td xpm xpmiss fgm fgm_yds fgmiss sack int ff fum_rec def_td safe blk_kick pts_allow yd_allow st_td st_ff st_fum_rec st_tkl_solo kr_yd pr_yd def_st_td def_st_ff def_st_fum_rec def_st_tkl_solo idp_sack_yd idp_int_ret_yd idp_fum_ret_yd idp_pass_def_3p').split(' '));
+  let points = 0; const unsupported = [];
+  const read = names => { for (const name of names) if (stats[name] != null && Number.isFinite(Number(stats[name]))) return Number(stats[name]); return 0; };
+  for (const [key, weight] of Object.entries(sc)) {
+    if (!Number.isFinite(Number(weight))) { unsupported.push(key); continue; }
+    if (Number(weight) === 0) continue;
+    let value;
+    if (aliases[key]) {
+      if (pos === 'DEF' || pos === 'DST') continue;
+      value = key === 'idp_tkl' && stats.idp_tkl == null && stats.tkl == null
+        ? read(['idp_tkl_solo','tkl_solo']) + read(['idp_tkl_ast','tkl_ast'])
+        : read([key, ...aliases[key]]);
+    } else if (Object.values(aliases).some(names => names.includes(key))) {
+      const canonical = Object.keys(aliases).find(k => aliases[k].includes(key));
+      if (pos !== 'DEF' && pos !== 'DST' && Object.prototype.hasOwnProperty.call(sc, canonical)) continue;
+      value = read([key, canonical]);
+    } else if (/^bonus_rec_(qb|rb|wr|te)$/i.test(key)) {
+      value = pos === key.slice(10).toUpperCase() ? read(['rec']) : 0;
+    } else if (/^bonus_(pass|rush|rec)_yd_\d+p?$/.test(key)) {
+      const match = key.match(/^bonus_(pass|rush|rec)_yd_(\d+)p?$/);
+      value = stats[key] != null ? read([key]) : Number(read([match[1] + '_yd']) >= Number(match[2]));
+    } else if (/^(pts_allow|yd_allow|fgm|fgmiss)_\d+(_\d+|p)?$/.test(key)) {
+      const match = key.match(/^(pts_allow|yd_allow|fgm|fgmiss)_(\d+)(?:_(\d+)|(p))?$/);
+      if (stats[key] != null) value = read([key]);
+      else if (match[1] === 'pts_allow' || match[1] === 'yd_allow') {
+        value = stats[match[1]] == null ? 0 : Number(read([match[1]]) >= Number(match[2]) && (match[4] || read([match[1]]) <= Number(match[3] || match[2])));
+      } else value = 0;
+      // 50+ and its split 50–59/60+ buckets are alternate encodings.
+      if ((key === 'fgm_50p' || key === 'fgmiss_50p') && (sc[key.replace('50p','50_59')] != null || sc[key.replace('50p','60p')] != null)) continue;
+    } else if (direct.has(key)) value = read([key]);
+    else { unsupported.push(key); continue; }
+    points += value * Number(weight);
+  }
+  return { points: Math.round(points * 100) / 100, unsupported, supported: unsupported.length === 0 };
 }
+function calcFantasyPts(stats, sc, position) { return calcFantasyPtsDetailed(stats, sc, position).points; }
+calcFantasyPts.detailed = calcFantasyPtsDetailed;
 
 // ── Normalize traded picks: owner_id can be roster_id OR user_id ─
 // Sleeper's /traded_picks API is ambiguous — detect which type and
@@ -506,6 +479,7 @@ var SleeperAPI = {
   fetchSeasonStats:   fetchSeasonStats,
   fetchSeasonProjections: fetchSeasonProjections,
   clearSeasonCaches:  clearSeasonCaches,
+  seasonFreshness: season => ({ stats: _statsCache[season]?.ts ?? null, projections: _sleeperProjectionsCache[season]?.ts ?? null, providerAsOf: null }),
   fetchUser:          fetchUser,
   fetchLeagues:       fetchLeagues,
   fetchRosters:       fetchRosters,
