@@ -240,7 +240,7 @@ function calcFantasyPtsDetailed(stats, sc, position) {
     idp_pass_def: ['pass_def'], idp_def_td: ['def_td'], idp_fum_rec: ['fum_rec'],
     idp_blk_kick: ['blk_kick'], idp_safe: ['safe'],
   };
-  const direct = new Set(('pass_yd pass_td pass_int pass_2pt pass_sack pass_cmp pass_att pass_inc pass_fd rush_yd rush_td rush_2pt rush_att rush_fd rec rec_yd rec_td rec_2pt rec_fd rec_tgt fum fum_lost fum_rec_td xpm xpmiss fgm fgm_yds fgmiss sack int ff fum_rec def_td safe blk_kick pts_allow yd_allow st_td st_ff st_fum_rec st_tkl_solo kr_yd pr_yd def_st_td def_st_ff def_st_fum_rec def_st_tkl_solo idp_sack_yd idp_int_ret_yd idp_fum_ret_yd idp_pass_def_3p').split(' '));
+  const direct = new Set(('pass_yd pass_td pass_int pass_int_td pass_2pt pass_sack pass_cmp pass_att pass_inc pass_fd rush_yd rush_td rush_2pt rush_att rush_fd rec rec_yd rec_td rec_2pt rec_fd rec_tgt fum fum_lost fum_rec_td xpm xpmiss fgm fgm_yds fgmiss sack int ff fum_rec def_td safe blk_kick blk_kick_ret_yd fg_ret_yd sack_yd int_ret_yd fum_ret_yd def_pr_td def_kr_td def_2pt def_3_and_out def_4_and_stop def_forced_punts pts_allow yd_allow yds_allow st_td st_ff st_fum_rec st_tkl_solo kr_yd pr_yd def_st_td def_st_ff def_st_fum_rec def_st_tkl_solo idp_sack_yd idp_int_ret_yd idp_fum_ret_yd idp_pass_def_3p').split(' '));
   let points = 0; const unsupported = [];
   const read = names => { for (const name of names) if (stats[name] != null && Number.isFinite(Number(stats[name]))) return Number(stats[name]); return 0; };
   for (const [key, weight] of Object.entries(sc)) {
@@ -261,15 +261,17 @@ function calcFantasyPtsDetailed(stats, sc, position) {
     } else if (/^bonus_(pass|rush|rec)_yd_\d+p?$/.test(key)) {
       const match = key.match(/^bonus_(pass|rush|rec)_yd_(\d+)p?$/);
       value = stats[key] != null ? read([key]) : Number(read([match[1] + '_yd']) >= Number(match[2]));
-    } else if (/^(pts_allow|yd_allow|fgm|fgmiss)_\d+(_\d+|p)?$/.test(key)) {
-      const match = key.match(/^(pts_allow|yd_allow|fgm|fgmiss)_(\d+)(?:_(\d+)|(p))?$/);
+    } else if (/^(pts_allow|yds_allow|yd_allow|fgm|fgmiss)_\d+(_\d+|p)?$/.test(key)) {
+      const match = key.match(/^(pts_allow|yds_allow|yd_allow|fgm|fgmiss)_(\d+)(?:_(\d+)|(p))?$/);
       if (stats[key] != null) value = read([key]);
-      else if (match[1] === 'pts_allow' || match[1] === 'yd_allow') {
-        value = stats[match[1]] == null ? 0 : Number(read([match[1]]) >= Number(match[2]) && (match[4] || read([match[1]]) <= Number(match[3] || match[2])));
+      else if (match[1] === 'pts_allow' || match[1] === 'yd_allow' || match[1] === 'yds_allow') {
+        const rawKeys = match[1] === 'pts_allow' ? ['pts_allow'] : [match[1], match[1] === 'yds_allow' ? 'yd_allow' : 'yds_allow'];
+        value = rawKeys.every(k => stats[k] == null) ? 0 : Number(read(rawKeys) >= Number(match[2]) && (!!match[4] || read(rawKeys) <= Number(match[3] || match[2])));
       } else value = 0;
       // 50+ and its split 50–59/60+ buckets are alternate encodings.
       if ((key === 'fgm_50p' || key === 'fgmiss_50p') && (sc[key.replace('50p','50_59')] != null || sc[key.replace('50p','60p')] != null)) continue;
-    } else if (direct.has(key)) value = read([key]);
+    } else if (key === 'yds_allow' || key === 'yd_allow') value = read([key, key === 'yds_allow' ? 'yd_allow' : 'yds_allow']);
+    else if (direct.has(key)) value = read([key]);
     else { unsupported.push(key); continue; }
     points += value * Number(weight);
   }
