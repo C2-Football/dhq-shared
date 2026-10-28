@@ -347,7 +347,8 @@ window.App.PlayerValue = (function () {
     // while VOR keeps flex-starter separation. 0.10 over-deflates and
     // degrades within-QB ordering.
     const ROS_GROSS_WT = 0.15, ROS_VOR_WT = 0.85;
-    // FantasyCalc REDRAFT market calibration weight — the redraft mirror of the
+    // Legacy/non-redraft market calibration weight. Redraft with RedraftMarket
+    // uses its single configurable combined budget instead. This mirrors the
     // dynasty tenet: the league-scored engine is the spine, the market is only
     // a CAPPED trim (25% influence, only where the market prices a player).
     const ROS_MARKET_WT = 0.25;
@@ -359,6 +360,7 @@ window.App.PlayerValue = (function () {
     let _rosMarket = { leagueId: null, map: null, fetching: null };
     const ROS_TTL_MS = 15 * 60 * 1000, MARKET_TTL_MS = 60 * 60 * 1000;
     let _generation = 0;
+    function marketChanged() { _ros = null; _rosInputs = null; }
     function invalidate() { _generation++; _ros = null; _rosInputs = null; _rosMarket = {}; }
     function leagueKey(league) { return JSON.stringify([league.season, league.status, league.scoring_settings, league.roster_positions, league.settings, league.total_rosters]); }
 
@@ -439,7 +441,7 @@ window.App.PlayerValue = (function () {
                 const map = {};
                 (Array.isArray(rows) ? rows : []).forEach(d => {
                     const sid = d && d.player && d.player.sleeperId;
-                    if (sid && d.value > 0 && d.player.position !== 'PICK') map[String(sid)] = Number(d.value);
+                    if (sid && typeof d.value === 'number' && Number.isFinite(d.value) && d.value >= 0 && d.player.position !== 'PICK') map[String(sid)] = Number(d.value);
                 });
                 _rosMarket = { leagueId, key, map: Object.keys(map).length ? map : null, fetching: null, fetchedAt: Date.now(), providerAsOf: null };
                 if (_rosMarket.map && _ros && _ros.leagueId === leagueId) {
@@ -537,10 +539,15 @@ window.App.PlayerValue = (function () {
         // kick the per-league FantasyCalc REDRAFT fetch (redraft only).
         if (!ctx.marketRedraft && _isRedraft(skin) && !ctx.noMarketFetch) _ensureRosMarket(league, leagueId);
         const market = ctx.marketRedraft || (_rosMarket.key === leagueId + '|' + leagueKey(league) && Date.now() - _rosMarket.fetchedAt < MARKET_TTL_MS ? _rosMarket.map : null);
-        const inputs = [playersData, statsData, priorData, projectionsData, market, ctx.playerScores || window.App?.LI?.playerScores, leagueKey(league), JSON.stringify(WP?.decisionHorizon?.(league)), JSON.stringify(ctx.availabilityEvidence || {})];
+        const cbsStore = window.App?.CbsMarket;
+        const cbsRedraft = skin?.type === 'redraft';
+        if (cbsRedraft && !ctx.noMarketFetch) cbsStore?.ensure?.();
+        const cbsInput = cbsRedraft ? (ctx.cbsInput || cbsStore?.read?.(league, week)) : null;
+        const marketIdentity = cbsRedraft ? (cbsStore?.identity?.(league, week) || 'none') : 'none';
+        const inputs = [marketIdentity, cbsInput?.version, cbsInput?.status, JSON.stringify(ctx.marketWeights || cbsStore?.weights || null), playersData, statsData, priorData, projectionsData, market, ctx.playerScores || window.App?.LI?.playerScores, leagueKey(league), JSON.stringify(WP?.decisionHorizon?.(league)), JSON.stringify(ctx.availabilityEvidence || {})];
         if (_ros && Date.now() - _ros.calculatedAt < ROS_TTL_MS && _ros.leagueId === leagueId && _ros.week === week && _rosInputs && inputs.every((v,i)=>v===_rosInputs[i])) return _ros;
         _rosInputs = inputs;
-        const built = computePrices({ ...ctx, league, leagueId, week, playersData, statsData, priorData, projectionsData, marketRedraft: market, _captureForecast: true });
+        const built = computePrices({ ...ctx, league, leagueId, week, playersData, statsData, priorData, projectionsData, marketRedraft: market, cbsInput, marketIdentity, skin, marketWeights: ctx.marketWeights || cbsStore?.weights, _captureForecast: true });
         _ros = built;
         return _ros;
     }
@@ -670,34 +677,46 @@ window.App.PlayerValue = (function () {
         }
         if (!Object.keys(points).length) return null;
 
-        // ── Capped market calibration (FantasyCalc REDRAFT, league params) ──
-        // Blend in VOR space so the scale anchor sees the calibrated board:
-        // market values are normalized so the market's top asset equals the
-        // local top VOR, then each priced player moves at most ROS_MARKET_WT
-        // of the way toward the market's view. Unpriced players keep their
-        // engine value untouched.
-        if (market) {
-            let maxMkt = 0;
-            for (const pid in market) if (market[pid] > maxMkt) maxMkt = market[pid];
-            if (maxMkt > 0) {
-                const mktScale = maxVor / maxMkt;
-                let newMax = 0;
-                for (const pid in vor) {
-                    const mv = market[pid];
-                    if (mv > 0 && (vor[pid] > 0 || perWkByPid[pid] > 0)) {
-                        vor[pid] = vor[pid] * (1 - ROS_MARKET_WT) + (mv * mktScale) * ROS_MARKET_WT;
+        // One market budget for redraft. Prices never modify the points map.
+        const marketEngine = window.App?.RedraftMarket;
+        let marketBasis = null;
+        if (marketEngine && (ctx.skin || window.App?.LeagueSkin?.getCurrent?.())?.type === 'redraft') {
+            const cbs = ctx.cbsInput || marketEngine.input(ctx.cbsSnapshot || null, league, week, ctx.now || Date.now());
+            const combined = marketEngine.blend(vor, { cbs, fantasyCalc: market, weights: ctx.marketWeights || marketEngine.DEFAULT_WEIGHTS });
+            Object.assign(vor, combined.values);
+            maxVor = Math.max(0, ...Object.values(vor));
+            marketBasis = { cbs, weights: combined.weights, details: combined.details, cbsApplied: Object.values(combined.details).some(d => !!d.sources.cbs), fantasyCalcAvailable: Object.values(combined.details).some(d => !!d.sources.fantasyCalc), fantasyCalcFetchedAt: _rosMarket.fetchedAt ?? null, identity: ctx.marketIdentity || 'none', provisional: true };
+        } else {
+            // ── Capped market calibration (FantasyCalc REDRAFT, league params) ──
+            // Blend in VOR space so the scale anchor sees the calibrated board:
+            // market values are normalized so the market's top asset equals the
+            // local top VOR, then each priced player moves at most ROS_MARKET_WT
+            // of the way toward the market's view. Unpriced players keep their
+            // engine value untouched.
+            if (market) {
+                let maxMkt = 0;
+                for (const pid in market) if (market[pid] > maxMkt) maxMkt = market[pid];
+                if (maxMkt > 0) {
+                    const mktScale = maxVor / maxMkt;
+                    let newMax = 0;
+                    for (const pid in vor) {
+                        const mv = market[pid];
+                        if (mv > 0 && (vor[pid] > 0 || perWkByPid[pid] > 0)) {
+                            vor[pid] = vor[pid] * (1 - ROS_MARKET_WT) + (mv * mktScale) * ROS_MARKET_WT;
+                        }
+                        if (vor[pid] > newMax) newMax = vor[pid];
                     }
-                    if (vor[pid] > newMax) newMax = vor[pid];
+                    maxVor = newMax || maxVor;
                 }
-                maxVor = newMax || maxVor;
             }
+
         }
 
         // Use a fixed display scale; dynasty prices never determine redraft value.
         const ceiling = ROS_SCALE_CEILING;
         const scale = maxVor > 0 ? ceiling / maxVor : 1;
         for (const pid in vor) values[pid] = Math.min(10000, Math.round(vor[pid] * scale));
-        const result = { season: String(league.season || ''), configurationKey: leagueKey(league), calculatedAt: Date.now(), fetchedAt: ctx.fetchedAt ?? null, providerAsOf: ctx.providerAsOf ?? null, sourceFreshness: window.Sleeper?.seasonFreshness?.(league.season) || null, marketFetchedAt: _rosMarket.fetchedAt ?? null, horizon, availability, healthyPoints, leagueId, week, remainingWeeks, points, values, scale, bestDHQ: ceiling, maxVor, replacementPerWk, marketApplied: !!market };
+        const result = { season: String(league.season || ''), configurationKey: leagueKey(league), calculatedAt: Date.now(), fetchedAt: ctx.fetchedAt ?? null, providerAsOf: ctx.providerAsOf ?? null, sourceFreshness: window.Sleeper?.seasonFreshness?.(league.season) || null, marketFetchedAt: _rosMarket.fetchedAt ?? null, horizon, availability, healthyPoints, leagueId, week, remainingWeeks, points, values, scale, bestDHQ: ceiling, maxVor, replacementPerWk, marketBasis, marketIdentity: ctx.marketIdentity || 'none', marketApplied: marketBasis ? (marketBasis.cbsApplied || marketBasis.fantasyCalcAvailable) : !!market };
         // Side-channel only: failure or absence of the ledger never changes ROS.
         if (ctx._captureForecast && window.App?.ForecastLedger?.capture) {
             try {
@@ -737,7 +756,14 @@ window.App.PlayerValue = (function () {
         const S = window.S || {}, league = (S.leagues || []).find(l => String(l.league_id || l.id) === _currentLeagueId()) || S.league;
         const week = window.App?.WeeklyProj?.currentWeek?.() ?? S.currentWeek;
         return _ros && _ros.leagueId === _currentLeagueId() && _ros.week === week && Date.now() - _ros.calculatedAt < ROS_TTL_MS
-            && (!league || leagueKey(league) === _ros.configurationKey) && (!S.nflState?.season || String(S.nflState.season) === _ros.season) ? _ros : null;
+            && (!league || leagueKey(league) === _ros.configurationKey) && (!league || window.App?.LeagueSkin?.getCurrent?.()?.type !== 'redraft' || !window.App?.CbsMarket || _ros.marketIdentity === window.App.CbsMarket.identity(league, week)) && (!S.nflState?.season || String(S.nflState.season) === _ros.season) ? _ros : null;
+    }
+    function marketEvidence(pids) {
+        const board = currentRos(), basis = board?.marketBasis;
+        if (!basis) return null;
+        const { values: _values, entries: _entries, ...source } = basis.cbs;
+        return { cbs: source, weights: basis.weights, provisional: true, cbsApplied: basis.cbsApplied, fantasyCalcAvailable: basis.fantasyCalcAvailable, fantasyCalcFetchedAt: basis.fantasyCalcFetchedAt,
+            players: Object.fromEntries((pids || []).map(pid => [pid, { cbs: basis.cbs.entries[pid] || null, pricing: basis.details[pid] || null, dhqValue: board.values[pid] ?? null, displayScale: board.scale }])) };
     }
     function getSeasonValue(pid) { return currentRos()?.values[pid] ?? null; }
     function getRosPoints(pid) { return currentRos()?.points[pid] ?? null; }
@@ -786,7 +812,7 @@ window.App.PlayerValue = (function () {
         getPickOverallSlot,
         resolvePickValue,
         projectPlayerValue,
-        ensureRos, invalidate, ROS_TTL_MS, MARKET_TTL_MS,
+        ensureRos, invalidate, marketChanged, marketEvidence, ROS_TTL_MS, MARKET_TTL_MS,
         computePrices,
         slotsFromRoster,
         ensureRosFromState,

@@ -81,3 +81,9 @@ This branch is a local candidate. Publish and verify the final shared commit onl
 with release authorization, then update the app's pinned dependency to that exact
 accessible commit and run its sync, tests and production build. Never deploy the
 app with a private/unpublished local SHA in its active checkout step.
+
+### CBS redraft market contract (local integration)
+
+`redraft-market.js` is the canonical snapshot validation, identity mapping, format-selection, and normalized combined-market adapter. Load it before `player-value.js`. The app sync copies it to `js/shared/redraft-market.js`; `player-value.js` remains byte-identical across repositories. For the redraft skin, the default single 25% market budget reserves 15% for valid CBS prices and 10% for FantasyCalc; unavailable weights stay with the seasonal engine. These are provisional engineering weights. Other skins keep existing behavior. Market prices never change forecast fantasy points or rescue unknown/zero seasonal values.
+
+CBS retrieval/scheduler and UI live in WarRoom-sandbox; see `docs/cbs-redraft-market.md` there for source-access restrictions, validation, operator import, tests, and release coordination. No automatic CBS source is enabled by this shared module. Publish and verify the real shared revision before changing the app's deployment pin; do not deploy against a local-only commit.
