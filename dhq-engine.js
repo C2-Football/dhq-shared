@@ -1755,7 +1755,7 @@ async function loadLeagueIntel(){
     if(typeof window.OD?.loadValueSnapshots==='function'){
       try{
         const rows=await window.OD.loadValueSnapshots({leagueId:S.currentLeagueId});
-        (rows||[]).filter(r=>r.source==='trade').forEach(r=>{
+        (rows||[]).filter(r=>r.source==='trade'&&r.value_type==='dynasty'&&!r.context?.observed_now).forEach(r=>{
           const key=`${r.context?.trade_key}|${r.player_id}`;
           tradeValueSnapshots[key]=r.value;
         });
@@ -1789,30 +1789,6 @@ async function loadLeagueIntel(){
         fairness,winner,valueDiff:diff,valueDiffPct:diffPct
       };
     });
-
-    // Freeze today's value for every player in a newly-discovered trade —
-    // fire-and-forget (mirrors saveDNA), never blocks the league load. Later
-    // loads of this same trade will read these back via loadValueSnapshots
-    // above instead of re-pricing against a future market.
-    if(newTradeKeys.size&&typeof window.OD?.recordValueSnapshot==='function'){
-      const curWeek=Number(S.nflState?.display_week||S.nflState?.week||0);
-      (tradeTxns||[]).forEach(t=>{
-        const tk=tradeKey(t);
-        if(!newTradeKeys.has(tk))return;
-        (t.roster_ids||[]).forEach(rid=>{
-          (t.sides?.[rid]?.players||[]).forEach(pid=>{
-            const value=playerScores[pid];
-            if(value==null)return;
-            window.OD.recordValueSnapshot({
-              leagueId:S.currentLeagueId,playerId:pid,
-              season:Number(t.season)||curSeason,week:Number(t.week)||curWeek,
-              ts:t.ts?new Date(t.ts).toISOString():undefined,
-              value,valueType:'dynasty',source:'trade',context:{trade_key:tk},
-            });
-          });
-        });
-      });
-    }
 
     // Enrich ownerProfiles with value-based trade metrics
     Object.values(ownerProfiles).forEach(p=>{
@@ -2478,6 +2454,30 @@ async function loadLeagueIntel(){
       leagueYears:uniqueYears,
       builtAt:new Date().toISOString(),
     };
+    // Freeze today's value for every player in a newly-discovered trade —
+    // fire-and-forget (mirrors saveDNA), never blocks the league load. Later
+    // loads of this same trade will read these back via loadValueSnapshots
+    // above instead of re-pricing against a future market.
+    if(newTradeKeys.size&&Number(league?.settings?.type)===2&&typeof window.OD?.recordValueSnapshot==='function'){
+      const curWeek=Number(S.nflState?.week||S.nflState?.display_week||0);
+      (tradeTxns||[]).forEach(t=>{
+        const tk=tradeKey(t);
+        if(!newTradeKeys.has(tk))return;
+        (t.roster_ids||[]).forEach(rid=>{
+          (t.sides?.[rid]?.players||[]).forEach(pid=>{
+            const value=playerScores[pid];
+            if(value==null)return;
+            window.OD.recordValueSnapshot({
+              leagueId:S.currentLeagueId,playerId:pid,
+              season:curSeason,week:curWeek,
+              ts:new Date().toISOString(),calculatedAt:new Date().toISOString(),eventId:tk,
+              value,valueType:'dynasty',source:'trade',context:{trade_key:tk,event_at:t.ts||null,observed_now:true},
+            }).catch(e=>{window.App.valueHistorySaveError=e.message;console.warn('[DHQ] trade snapshot save failed:',e.message);});
+          });
+        });
+      });
+    }
+
     LI_LOADED=true;
     saveLICache();
 

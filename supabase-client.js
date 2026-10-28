@@ -590,74 +590,60 @@ window.OD.saveDNA = function(leagueId, dnaMap) {
 // yourself). See supabase/migrations/20260809000000_player_value_snapshots.sql.
 // ══════════════════════════════════════════════════════════════════
 
-// Fire-and-forget, like saveDNA — callers are on hot paths (a pick, a trade
-// refresh) and must not block on the network. First write for a given
-// (league, player, season, week, source) wins; later callers no-op.
-window.OD.recordValueSnapshot = function({ leagueId, playerId, season, week, ts, value, valueType, source, context }) {
-    if (!isConfigured() || !hasOwnerIdentity()) return;
+// Completion is observable; hot-path callers may handle the promise in the background.
+window.OD.recordValueSnapshot = function(row) { return window.OD.recordValueSnapshots([row]); };
+window.OD.recordValueSnapshots = async function(rows) {
+    if (!isConfigured() || !hasOwnerIdentity() || !getSessionToken()) throw new Error('Sign in to save value history');
     const db = getClient();
-    if (!db || leagueId == null || playerId == null || value == null) return;
-    const owner = getOwnerIdentity();
-    ensureUser(owner.username).then(() => {
-        db.from('player_value_snapshots').upsert(
-            {
-                league_id: String(leagueId),
-                player_id: String(playerId),
-                season: Number(season),
-                week: Number(week),
-                ts: ts || new Date().toISOString(),
-                value: Number(value),
-                value_type: valueType,
-                source,
-                context: context || {},
-                ...ownerCols(owner),
-            },
-            { onConflict: 'league_id,player_id,season,week,source', ignoreDuplicates: true }
-        );
-    }).catch(console.warn);
+    if (!db) throw new Error('Value history database client unavailable');
+    if (!Array.isArray(rows) || !rows.length || rows.length > 500) throw new Error('Supply 1–500 snapshot rows');
+    const owner = getOwnerIdentity(), now = new Date().toISOString();
+    const payload = rows.map(r => ({...window.App.ValueHistory.normalize(r, now), ...ownerCols(owner)}));
+    // These writes do not depend on a legacy users row. RLS validates the session.
+    const { error } = await db.from('player_value_snapshots').upsert(payload,
+        { onConflict: 'league_id,player_id,value_type,capture_key', ignoreDuplicates: true });
+    if (error) throw new Error('Value history save failed: ' + error.message);
+    // Read after write, including idempotent conflicts: an attempted POST is not persistence proof.
+    const stored = [];
+    for (const key of [...new Set(payload.map(r => JSON.stringify([r.league_id,r.value_type,r.capture_key])))]) {
+        const [league,type,bucket] = JSON.parse(key);
+        const expected = payload.filter(r => r.league_id===league && r.value_type===type && r.capture_key===bucket);
+        const { data, error: readError } = await db.from('player_value_snapshots').select('*')
+            .eq('league_id',league).eq('value_type',type).eq('capture_key',bucket).in('player_id',expected.map(r=>r.player_id));
+        if (readError) throw new Error('Value history readback failed: '+readError.message);
+        if (!expected.every(r => (data||[]).some(d=>d.player_id===r.player_id))) throw new Error('Value history readback incomplete');
+        stored.push(...data);
+    }
+    return {ok:true,verified:true,rows:stored};
 };
 
-// Batch variant for periodic per-league capture (one round-trip for a whole roster).
-window.OD.recordValueSnapshots = function(rows) {
-    if (!isConfigured() || !hasOwnerIdentity() || !Array.isArray(rows) || !rows.length) return;
-    const db = getClient();
-    if (!db) return;
-    const owner = getOwnerIdentity();
-    const payload = rows
-        .filter(r => r && r.leagueId != null && r.playerId != null && r.value != null)
-        .map(r => ({
-            league_id: String(r.leagueId),
-            player_id: String(r.playerId),
-            season: Number(r.season),
-            week: Number(r.week),
-            ts: r.ts || new Date().toISOString(),
-            value: Number(r.value),
-            value_type: r.valueType,
-            source: r.source,
-            context: r.context || {},
-            ...ownerCols(owner),
-        }));
-    if (!payload.length) return;
-    ensureUser(owner.username).then(() => {
-        db.from('player_value_snapshots').upsert(
-            payload,
-            { onConflict: 'league_id,player_id,season,week,source', ignoreDuplicates: true }
-        );
-    }).catch(console.warn);
+window.OD.loadValueSnapshots = async function({leagueId,playerId,valueType,runId}) {
+    const db=getClient();
+    if(!db || !getSessionToken())throw new Error('Sign in to read persisted value history');
+    if(!leagueId)throw new Error('League required');
+    const rows=[];
+    for(let offset=0;;offset+=500){
+        let q=db.from('player_value_snapshots').select('*').eq('league_id',String(leagueId));
+        if(playerId!=null)q=q.eq('player_id',String(playerId));
+        if(valueType)q=q.eq('value_type',valueType);
+        if(runId)q=q.eq('run_id',runId);
+        const {data,error}=await q.order('ts',{ascending:true}).order('id',{ascending:true}).range(offset,offset+499);
+        if(error)throw new Error('Value history load failed: '+error.message);
+        rows.push(...(data||[]));if(!data||data.length<500)break;
+    }
+    return rows;
 };
-
-// Read back a player's (or a whole league's) value history, oldest first.
-window.OD.loadValueSnapshots = async function({ leagueId, playerId }) {
-    if (!isConfigured()) return [];
-    const db = getClient();
-    if (!db || leagueId == null) return [];
-    let q = db.from('player_value_snapshots')
-        .select('player_id,season,week,ts,value,value_type,source,context')
-        .eq('league_id', String(leagueId));
-    if (playerId != null) q = q.eq('player_id', String(playerId));
-    const { data, error } = await q.order('season', { ascending: true }).order('week', { ascending: true });
-    if (error) { console.warn(error); return []; }
-    return data || [];
+window.OD.loadValueMonitorRuns = async function(leagueId) {
+    const db=getClient();if(!db||!getSessionToken())throw new Error('Sign in to read monitor status');
+    const {data,error}=await db.from('value_monitor_runs').select('*').eq('league_id',String(leagueId)).order('starts_at',{ascending:false}).limit(20);
+    if(error)throw new Error('Monitor status unavailable: '+error.message);
+    return data||[];
+};
+window.OD.loadValueMonitorReport = async function(run) {
+    const {data,error}=await getClient().from('value_monitor_captures').select('*').eq('run_id',run.id).order('capture_index');
+    if(error)throw new Error('Monitor captures unavailable: '+error.message);
+    const rows=await window.OD.loadValueSnapshots({leagueId:run.league_id,valueType:run.value_type,runId:run.id});
+    return window.App.ValueHistory.report(run,data||[],rows);
 };
 
 // ══════════════════════════════════════════════════════════════════
