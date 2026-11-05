@@ -271,7 +271,7 @@
         return { ...base, status: ranked.length ? 'ready' : pricedTargets ? 'empty' : 'unavailable', reason: ranked.length ? null : pricedTargets ? 'No verified package meets your ' + strategy.acceptanceFloor + '% acceptance floor, protected core and GM plan.' : 'Other teams’ player prices are unavailable for this league.',
             before, candidates: ranked, readiness: { pricing: true, weekly: true, season: false } };
     }
-    async function load(opts) {
+    async function load(opts, inspectInputs) {
         opts = opts || {};
         const league = opts.league || {}, rosters = opts.rosters || league.rosters || [], players = opts.players || opts.playersData || {}, skin = skinFor(opts);
         const currentWeek = num(opts.currentWeek) ?? num(App.WeeklyProj?.currentWeek?.()) ?? num(root.S?.currentWeek), week = num(opts.week) ?? (currentWeek == null ? null : currentWeek + 1);
@@ -304,7 +304,7 @@
             const partnerNotice=App.RosterForecastScenario?.notice(args.projectionsByPid,players,partner);
             return {...c,conditionalParticipation:!!(participationNotice || partnerNotice),cautions:[...(c.cautions || []),...new Set([participationNotice,partnerNotice].filter(Boolean))]};
         }) };
-        App.AdviceCapture?.prepared?.('trade', args, answer);
+        if (typeof inspectInputs === 'function') inspectInputs(args);
         return answer;
     }
     async function loadSeason(opts) {

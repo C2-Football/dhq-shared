@@ -40,7 +40,6 @@
     "draft-gameplan.js",
     "alex-voice.js",
     "gm-mode.js",
-    "advice-scorecard.js",
     "roster-waiver-lens.js",
     "roster-trade-lens.js",
     "waiver-roster-read.js",
@@ -50,5 +49,8 @@
     "draft-war-room/player.csv",
     "draft-war-room/player-enrichment.csv",
     "draft-war-room/data/mock_draft_db.csv"
+  ],
+  "serverModules": [
+    "advice-scorecard.js"
   ]
 }

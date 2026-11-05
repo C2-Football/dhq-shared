@@ -184,7 +184,7 @@
             readiness:{weekly:beforeWeek != null,season:beforeRos != null},before:{weekly:beforeWeek,season:beforeRos},
             basisDescription:basis !== 'projected' ? App.RosterLensBasis.describe(basis,windowOf(args)).description : type === 'chopped' ? 'This-week lineup points; survival probability changes are not modeled.' : 'Best legal lineup before and after one alternative move. ROS holds rosters fixed.'});
     }
-    async function load(input) {
+    async function load(input, inspectInputs) {
         let args={...input,league:input.league || {},priorData:input.priorData || input.priorStatsData,draft:input.draft || input.briefDraftInfo};
         args.rosters=args.rosters || args.league.rosters;
         args.week=number(args.week) || App.WeeklyProj?.currentWeek?.();
@@ -248,7 +248,7 @@
             const notice=App.RosterForecastScenario?.notice(args.projectionsByPid,args.players,{players:[...ids(args.roster),...(Array.isArray(c.incoming) ? c.incoming:[c.incoming]).filter(Boolean).map(p => p.pid)]});
             return {...c,conditionalParticipation:!!notice,cautions:[...(c.cautions || []),...(notice ? [notice]:[])]};
         }) };
-        App.AdviceCapture?.prepared?.('waiver', args, answer);
+        if (typeof inspectInputs === 'function') inspectInputs(args);
         return answer;
     }
     const api={load,evaluate,rank,scope,restrictions};
