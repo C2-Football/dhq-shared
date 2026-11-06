@@ -76,8 +76,9 @@
         const eligible = slot => flex[slot] || [slot];
         // Weighted matching: greedy by value over a transversal matroid. FLEX
         // reassignment ensures one player occupies only one legal starter slot.
-        function lineup(pool, metric) {
-            const ordered = pool.slice().sort((a,b) => (b[metric] ?? 0) - (a[metric] ?? 0));
+        function lineup(pool, metric, includeUnscored = false) {
+            const ordered = pool.slice();
+            if (metric !== 'coverage') ordered.sort((a,b) => (b[metric] ?? -Infinity) - (a[metric] ?? -Infinity));
             const assigned = new Map();
             const place = (i, seen) => {
                 for (let j = 0; j < slots.length; j++) {
@@ -87,17 +88,21 @@
                 }
                 return false;
             };
-            ordered.forEach((p,i) => { if (metric === 'coverage' || p[metric] != null) place(i,new Set()); });
+            ordered.forEach((p,i) => { if (metric === 'coverage' || includeUnscored || p[metric] != null) place(i,new Set()); });
             const starters = [...assigned.values()].map(i => ordered[i]);
-            return { count: starters.length, total: starters.reduce((sum,p) => sum + (p[metric] ?? 0),0), pids: starters.map(p => p.pid) };
+            const scored = starters.filter(p => p[metric] != null);
+            return { count: starters.length, total: scored.reduce((sum,p) => sum + p[metric],0), pids: starters.map(p => p.pid),
+                unscored: includeUnscored ? starters.filter(p => p[metric] == null).map(p => p.pid).sort() : [] };
         }
         const usable = active.filter(p => p.available);
         const coverage = lineup(usable, 'coverage').count;
         const weeklyLocked = owned.some(p => ['live','locked','final'].includes(root.App?.WeeklyProj?.gameStatusFor?.(players?.[p.pid]?.team, week)));
-        const beforeWeekly = lineup(usable, 'projection');
+        const partialWeekly = options.allowPartialWeekly && usable.some(p => p.projection == null);
+        const beforeWeekly = lineup(usable, 'projection', partialWeekly);
         const beforeSeason = lineup(active, 'dhq');
         const beforeRos = lineup(active, 'rosPoints');
-        beforeWeekly.complete = !weeklyLocked && usable.every(p=>p.projection!=null);
+        beforeWeekly.complete = !weeklyLocked && usable.every(p => p.projection != null);
+        beforeWeekly.partial = !!partialWeekly && !weeklyLocked && beforeWeekly.count > beforeWeekly.unscored.length;
         beforeSeason.complete = active.every(p=>p.dhq!=null);
         beforeRos.complete = active.every(p=>p.rosPoints!=null);
         const rows = [...new Set(slots.flatMap(eligible))].map(pos => {
@@ -122,9 +127,14 @@
             for (const drop of drops) {
                 const after = active.filter(p => p.pid !== drop?.pid).concat(add);
                 const playable = after.filter(p => p.available);
-                const completeWeekly = !weeklyLocked && !candidateLocked && usable.every(p => p.projection != null) && (!add.available || add.projection != null);
+                const canCompare = !candidateLocked && (beforeWeekly.complete || beforeWeekly.partial)
+                    && (!add.available || add.projection != null);
+                const afterWeekly = canCompare ? lineup(playable, 'projection', partialWeekly) : null;
+                // Compare the scored points only when the same unscored players remain in the lineup.
+                const comparable = afterWeekly && (!partialWeekly
+                    || afterWeekly.unscored.join('|') === beforeWeekly.unscored.join('|'));
                 const completeSeason = active.every(p => p.dhq != null) && add.dhq != null;
-                const weeklyGain = completeWeekly ? +(lineup(playable,'projection').total - beforeWeekly.total).toFixed(2) : null;
+                const weeklyGain = comparable ? +(afterWeekly.total - beforeWeekly.total).toFixed(2) : null;
                 const seasonGain = completeSeason ? Math.round(lineup(after,'dhq').total - beforeSeason.total) : null;
                 const rosGain = active.every(p=>p.rosPoints != null) && add.rosPoints != null ? +(lineup(after,'rosPoints').total - beforeRos.total).toFixed(1) : null;
                 if (options.horizon === 'week' && !(weeklyGain > 0)) continue;
@@ -135,7 +145,7 @@
                 // Do not fix one slot by opening another, or sell a higher-valued
                 // seasonal asset for a one-week bump without explicit owner choice.
                 if (lineup(playable,'coverage').count < coverage) continue;
-                const next = { conditional: !add.available || weeklyGain == null || !options.locksVerified, beforeWeekly: beforeWeekly.complete ? beforeWeekly.total : null, afterWeekly: completeWeekly ? lineup(playable,'projection').total : null, availabilityNote: !add.available ? add.unavailable + ': season upside assumes availability; return timing is not established.' : null, rosGain, candidateRosPoints: add.rosPoints, weeklyGain, seasonGain, benchGain, dropPid: drop?.pid || null, dropName: drop?.name || null, candidateProjection: add.projection, dropProjection: drop?.projection ?? null, dropValue: drop?.dhq ?? null, requiresLockCheck: true };
+                const next = { conditional: !add.available || weeklyGain == null || !options.locksVerified, beforeWeekly: comparable ? beforeWeekly.total : null, afterWeekly: comparable ? afterWeekly.total : null, availabilityNote: !add.available ? add.unavailable + ': season upside assumes availability; return timing is not established.' : null, rosGain, candidateRosPoints: add.rosPoints, weeklyGain, seasonGain, benchGain, dropPid: drop?.pid || null, dropName: drop?.name || null, candidateProjection: add.projection, dropProjection: drop?.projection ?? null, dropValue: drop?.dhq ?? null, requiresLockCheck: true };
                 if (options.horizon === 'season') {
                     if (!best || next.rosGain > best.rosGain || next.rosGain === best.rosGain && ((next.weeklyGain ?? -Infinity) > (best.weeklyGain ?? -Infinity) || next.weeklyGain === best.weeklyGain && (next.dropProjection ?? Infinity) < (best.dropProjection ?? Infinity))) best = next;
                     continue;
