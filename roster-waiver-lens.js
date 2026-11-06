@@ -13,6 +13,13 @@
     const norm = pos => App.normPos?.(pos) || App.RosterLensBasis?.position?.(pos) || ({ DST:'DEF', 'D/ST':'DEF', DE:'DL', DT:'DL', NT:'DL', IDL:'DL', EDGE:'DL', CB:'DB', S:'DB', SS:'DB', FS:'DB', OLB:'LB', ILB:'LB', MLB:'LB' }[pos] || pos);
     const typeOf = args => args.skin?.type || App.LeagueSkin?.build?.({league:args.league})?.type
         || ({0:'redraft',1:'keeper',2:'dynasty',3:'chopped'})[args.league?.settings?.type] || 'unknown';
+    function normalizeReleasedRosters(league, rosters) {
+        if (!App.Chopped?.isChopped?.(league) || !Array.isArray(rosters)) return rosters;
+        // Sleeper sends null after releasing a chopped team's players.
+        return rosters.map(roster => roster?.players === null && App.Chopped.isEliminated(roster)
+            ? { ...roster, players: [] }
+            : roster);
+    }
     function account(args) {
         const authenticated=args.accountId || (App.OD || root.OD)?.getCurrentUserId?.();
         if (authenticated) return 'account:'+String(authenticated);
@@ -106,7 +113,7 @@
             : score(c) > 0).slice().sort((a,b) => (score(b) ?? -Infinity)-(score(a) ?? -Infinity) || a.id.localeCompare(b.id));
     }
     function evaluate(input) {
-        const args={...input,priorData:input.priorData || input.priorStatsData || {}};
+        const args={...input,rosters:normalizeReleasedRosters(input.league,input.rosters),priorData:input.priorData || input.priorStatsData || {}};
         const blocked=restrictions(args);
         if (blocked) return result(args,...blocked);
         const common = App.RecommendationEligibility?.check({ ...args.league, rosters: args.rosters }, args.roster);
@@ -117,13 +124,15 @@
         if (!(week >= 1 && week <= 18)) return result(args,'unavailable','The current NFL week is unavailable.');
         const players=args.players || {}, owned=new Set(ids(args.roster));
         if (!Object.keys(players).length || [...owned].some(pid => !players[pid]?.position)) return result(args,'unavailable','Player and roster data are still loading.');
-        const ros=verifiedRos(args,week), project=pid => projectionNumber(args.projectionsByPid?.[pid]);
         const type=typeOf(args), gm=args.gm || {}, effects=gm.effects || gm;
+        const ros=type === 'chopped' ? () => null : verifiedRos(args,week);
+        const project=pid => projectionNumber(args.projectionsByPid?.[pid]);
         const protectedPids=[...(effects.untouchable || []),...(gm.untouchables || []),...(args.protectedPids || [])].map(String);
         const valueOf=pid => own(args.valuesByPid,pid) ? number(args.valuesByPid[pid]) : null;
         const conditionalPids=new Set(Object.keys(args.projectionsByPid || {}).filter(pid => args.projectionsByPid[pid]?.conditionalParticipation));
         const options={week,protectedPids,project,rosProject:ros,conditionalPids};
-        const reads=['week','season'].map(horizon => App.buildFaRosterRead(args.roster,{...args.league,rosters:args.rosters},players,valueOf,{...options,horizon}));
+        const horizons=type === 'chopped' ? ['week'] : ['week','season'];
+        const reads=horizons.map(horizon => App.buildFaRosterRead(args.roster,{...args.league,rosters:args.rosters},players,valueOf,{...options,horizon}));
         const read=reads[0];
         if (!read.known) return result(args,'unavailable','The legal starting lineup could not be verified.');
         const copies=Math.max(1,number(args.league.settings?.player_copies) || 1), counts={};
@@ -133,7 +142,7 @@
         const beforeWeek=read.beforeWeekly.complete ? number(read.beforeWeekly.total) : null;
         const beforeRos=read.beforeRos?.complete ? number(read.beforeRos.total) : null;
         const reserve=new Set([...(args.roster.reserve || []),...(args.roster.taxi || [])].map(String));
-        const missingRos=ids(args.roster).filter(pid => !reserve.has(pid) && ros(pid) == null);
+        const missingRos=type === 'chopped' ? [] : ids(args.roster).filter(pid => !reserve.has(pid) && ros(pid) == null);
         const seasonReason=basis !== 'projected'
             ? 'Current-season averages are historical benchmarks, not rest-of-season forecasts. Choose Projected for a season comparison.'
             : missingRos.length ? 'ROS forecast unavailable for ' + missingRos.map(pid => players[pid]?.full_name || pid).join(', ') + '.' : null;
@@ -186,7 +195,7 @@
     }
     async function load(input, inspectInputs) {
         let args={...input,league:input.league || {},priorData:input.priorData || input.priorStatsData,draft:input.draft || input.briefDraftInfo};
-        args.rosters=args.rosters || args.league.rosters;
+        args.rosters=normalizeReleasedRosters(args.league,args.rosters || args.league.rosters);
         args.week=number(args.week) || App.WeeklyProj?.currentWeek?.();
         const blocked=restrictions(args);
         if (blocked) return result(args,...blocked);
