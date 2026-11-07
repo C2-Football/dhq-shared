@@ -130,7 +130,8 @@
         const protectedPids=[...(effects.untouchable || []),...(gm.untouchables || []),...(args.protectedPids || [])].map(String);
         const valueOf=pid => own(args.valuesByPid,pid) ? number(args.valuesByPid[pid]) : null;
         const conditionalPids=new Set(Object.keys(args.projectionsByPid || {}).filter(pid => args.projectionsByPid[pid]?.conditionalParticipation));
-        const allowPartialWeekly=type === 'chopped' && basis !== 'projected';
+        // Missing averages can coexist with a verified gain in other lineup slots.
+        const allowPartialWeekly=basis !== 'projected';
         const options={week,protectedPids,project,rosProject:ros,allowPartialWeekly,conditionalPids};
         const horizons=type === 'chopped' ? ['week'] : ['week','season'];
         const reads=horizons.map(horizon => App.buildFaRosterRead(args.roster,{...args.league,rosters:args.rosters},players,valueOf,{...options,horizon}));
