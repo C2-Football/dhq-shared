@@ -8,6 +8,7 @@
     const normalizeWindow = value => ['3', '5'].includes(String(value)) ? String(value) : 'season';
     const windowLabel = value => normalizeWindow(value) === 'season' ? 'Season' : 'Last ' + normalizeWindow(value) + ' games';
     const position = value => ({ DE: 'DL', DT: 'DL', EDGE: 'DL', NT: 'DL', IDL: 'DL', ILB: 'LB', OLB: 'LB', MLB: 'LB', CB: 'DB', S: 'DB', SS: 'DB', FS: 'DB', DST: 'DEF', 'D/ST': 'DEF' })[String(value || '').toUpperCase()] || String(value || '').toUpperCase();
+    const hasIdp = league => (league?.roster_positions || []).some(slot => ['DL', 'LB', 'DB', 'IDP', 'IDP_FLEX'].includes(position(String(slot).trim())));
     const scoringKey = scoring => JSON.stringify(Object.entries(scoring || {}).sort(([a], [b]) => a.localeCompare(b)));
     const leagueId = opts => String(opts.league?.league_id || opts.league?.id || '');
     const platformOf = opts => String(opts.platform || opts.league?._platform || (opts.league?._mfl ? 'mfl' : opts.league?._espn ? 'espn' : opts.league?._yahoo ? 'yahoo' : root.S?.platform || 'sleeper'));
@@ -131,7 +132,7 @@
         } catch (_) { /* unavailable stays distinct from zero */ }
         return opts;
     }
-    const api = { normalize, normalizeWindow, windowLabel, position, describe, sourceContext, currentAverage, comparison, adapt, prepare };
+    const api = { normalize, normalizeWindow, windowLabel, position, hasIdp, describe, sourceContext, currentAverage, comparison, adapt, prepare };
     App.RosterLensBasis = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
