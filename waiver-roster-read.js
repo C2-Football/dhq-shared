@@ -96,6 +96,14 @@
         }
         const usable = active.filter(p => p.available);
         const coverage = lineup(usable, 'coverage').count;
+        // A bye or injury does not make next week's roster coverage expendable.
+        const futurePool = pool => pool.filter(p => p.available || p.unavailable === 'Bye' || p.injury);
+        const futureOwned = futurePool(active), futureCoverage = lineup(futureOwned, 'coverage').count;
+        const dedicated = {};
+        slots.forEach(slot => { const allowed = eligible(slot); if (allowed.length === 1) dedicated[allowed[0]] = (dedicated[allowed[0]] || 0) + 1; });
+        const positionFloors = Object.entries(dedicated).map(([pos, count]) => [pos, Math.min(count, futureOwned.filter(p => p.pos === pos).length)]);
+        const qbSlots = slots.filter(slot => eligible(slot).includes('QB')).length;
+        const qbFloor = qbSlots ? Math.min(qbSlots + 1, futureOwned.filter(p => p.pos === 'QB').length) : 0;
         const weeklyLocked = owned.some(p => ['live','locked','final'].includes(root.App?.WeeklyProj?.gameStatusFor?.(players?.[p.pid]?.team, week)));
         const partialWeekly = options.allowPartialWeekly && usable.some(p => p.projection == null);
         const beforeWeekly = lineup(usable, 'projection', partialWeekly);
@@ -123,7 +131,7 @@
             const drops = active.length < capacity ? [null] : active.filter(p => !protectedIds.has(p.pid)
                 && root._playerTags?.[p.pid] !== 'untouchable' && !p.injury
                 && p.dhq != null && add.dhq != null && p.dhq <= add.dhq);
-            let best = null;
+            let best = null, bestRank = null;
             for (const drop of drops) {
                 const after = active.filter(p => p.pid !== drop?.pid).concat(add);
                 const playable = after.filter(p => p.available);
@@ -145,12 +153,24 @@
                 // Do not fix one slot by opening another, or sell a higher-valued
                 // seasonal asset for a one-week bump without explicit owner choice.
                 if (lineup(playable,'coverage').count < coverage) continue;
+                const futureAfter = futurePool(after);
+                if (lineup(futureAfter, 'coverage').count < futureCoverage
+                    || positionFloors.some(([pos, floor]) => futureAfter.filter(p => p.pos === pos).length < floor)
+                    || futureAfter.filter(p => p.pos === 'QB').length < qbFloor) continue;
                 const next = { conditional: !add.available || weeklyGain == null || !options.locksVerified, beforeWeekly: comparable ? beforeWeekly.total : null, afterWeekly: comparable ? afterWeekly.total : null, availabilityNote: !add.available ? add.unavailable + ': season upside assumes availability; return timing is not established.' : null, rosGain, candidateRosPoints: add.rosPoints, weeklyGain, seasonGain, benchGain, dropPid: drop?.pid || null, dropName: drop?.name || null, candidateProjection: add.projection, dropProjection: drop?.projection ?? null, dropValue: drop?.dhq ?? null, requiresLockCheck: true };
-                if (options.horizon === 'season') {
-                    if (!best || next.rosGain > best.rosGain || next.rosGain === best.rosGain && ((next.weeklyGain ?? -Infinity) > (best.weeklyGain ?? -Infinity) || next.weeklyGain === best.weeklyGain && (next.dropProjection ?? Infinity) < (best.dropProjection ?? Infinity))) best = next;
-                    continue;
+                // Equal lineup improvements replace the same position first, then
+                // a shared FLEX alternative, before sacrificing another position's depth.
+                const replacement = !drop || drop.pos === add.pos ? 2
+                    : slots.some(slot => eligible(slot).includes(add.pos) && eligible(slot).includes(drop.pos)) ? 1 : 0;
+                const rank = options.horizon === 'season'
+                    ? [next.rosGain, replacement, next.weeklyGain ?? -Infinity, -(next.dropProjection ?? Infinity)]
+                    : [next.weeklyGain ?? 0, replacement, next.seasonGain ?? 0, -(next.dropValue ?? 0)];
+                let better = !best;
+                if (best) for (let i = 0; i < rank.length; i++) {
+                    if (rank[i] === bestRank[i]) continue;
+                    better = rank[i] > bestRank[i]; break;
                 }
-                if (!best || (next.weeklyGain ?? 0) > (best.weeklyGain ?? 0) || (next.weeklyGain ?? 0) === (best.weeklyGain ?? 0) && ((next.seasonGain ?? 0) > (best.seasonGain ?? 0) || (next.seasonGain ?? 0) === (best.seasonGain ?? 0) && (next.dropValue ?? 0) < (best.dropValue ?? 0))) best = next;
+                if (better) { best = next; bestRank = rank; }
             }
             if (!best) return { ...base, label: drops.length ? base.label : 'No safe drop identified; review roster space or protected players' };
             const weekly = best.weeklyGain > 0;
